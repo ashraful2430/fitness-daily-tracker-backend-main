@@ -4,28 +4,34 @@ import jwt from "jsonwebtoken";
 import User, { IUser } from "../models/User";
 import { AuthRequest } from "../middleware/authMiddleware";
 
+const COOKIE_NAME = "token";
+
 function createToken(userId: string) {
   return jwt.sign({ userId }, process.env.JWT_SECRET as string, {
-    expiresIn: "24h",
+    expiresIn: "7d",
   });
 }
 
 function setAuthCookie(res: Response, token: string) {
   const isProduction = process.env.NODE_ENV === "production";
-  res.cookie("token", token, {
+
+  res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     secure: isProduction,
     sameSite: isProduction ? "none" : "lax",
-    maxAge: 24 * 60 * 60 * 1000,
+    path: "/",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 }
 
 function clearAuthCookie(res: Response) {
   const isProduction = process.env.NODE_ENV === "production";
-  res.clearCookie("token", {
+
+  res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
     secure: isProduction,
     sameSite: isProduction ? "none" : "lax",
+    path: "/",
   });
 }
 
@@ -173,8 +179,8 @@ export async function login(req: AuthRequest, res: Response) {
     }
 
     const updatedUser = await updateLoginStreak(user);
-
     const token = createToken(updatedUser._id.toString());
+
     setAuthCookie(res, token);
 
     return res.json({
