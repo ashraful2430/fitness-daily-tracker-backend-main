@@ -9,6 +9,7 @@ import dashboardRoutes from "./routes/dashboardRoutes";
 import scoreSectionRoutes from "./routes/scoreSectionRoutes";
 import moneyRoutes from "./routes/moneyRoutes";
 import learningRoutes from "./routes/learningRoutes";
+import loanRoutes from "./routes/loanRoutes";
 
 dotenv.config();
 
@@ -41,6 +42,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/score-sections", scoreSectionRoutes);
 app.use("/api/money", moneyRoutes);
 app.use("/api/learning", learningRoutes);
+app.use("/api/loans", loanRoutes);
 
 // Test CORS with a simple route
 app.get("/test-cors", (req, res) => {

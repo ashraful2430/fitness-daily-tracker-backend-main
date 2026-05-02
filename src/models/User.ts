@@ -8,6 +8,7 @@ export interface IUser extends Document {
   lastLoginDate?: Date | null;
   loginStreak: number;
   longestLoginStreak: number;
+  personalBalance: number;
 }
 
 const UserSchema = new Schema<IUser>(
@@ -49,6 +50,11 @@ const UserSchema = new Schema<IUser>(
     longestLoginStreak: {
       type: Number,
       default: 0,
+    },
+    personalBalance: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
   },
   {
