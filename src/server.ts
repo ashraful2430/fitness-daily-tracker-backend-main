@@ -14,6 +14,9 @@ dotenv.config();
 
 const app = express();
 
+// Trust proxy for secure cookies when running behind a reverse proxy / cloud provider
+app.set("trust proxy", 1);
+
 const allowedOrigins = [
   "http://localhost:3000",
   "https://fitness-daily-tracker.vercel.app",

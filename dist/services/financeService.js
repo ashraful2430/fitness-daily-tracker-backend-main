@@ -217,7 +217,11 @@ async function createExpense(userId, amount, category, note, date) {
                 },
             ], { session });
             const { month, year } = buildMonthYear(date);
-            const salaryMonth = await SalaryMonth_1.default.findOne({ userId, month, year }).session(session);
+            const salaryMonth = await SalaryMonth_1.default.findOne({
+                userId,
+                month,
+                year,
+            }).session(session);
             if (salaryMonth) {
                 salaryMonth.totalSpent += amount;
                 salaryMonth.remainingSalary = Math.max(salaryMonth.totalSalary - salaryMonth.totalSpent, 0);
@@ -308,7 +312,11 @@ async function addSalary(userId, amount, date) {
     try {
         let salaryMonth;
         await session.withTransaction(async () => {
-            const existing = await SalaryMonth_1.default.findOne({ userId, month, year }).session(session);
+            const existing = await SalaryMonth_1.default.findOne({
+                userId,
+                month,
+                year,
+            }).session(session);
             if (existing) {
                 existing.totalSalary += amount;
                 existing.remainingSalary = Math.max(existing.remainingSalary + amount, 0);
@@ -488,7 +496,10 @@ async function repayLoan(userId, loanId, amount, creditor) {
                 if (!debtCreditor) {
                     throw new Error("Creditor is required to repay borrowed debt.");
                 }
-                const debt = await ExternalDebt_1.default.findOne({ userId, creditor: debtCreditor }).session(session);
+                const debt = await ExternalDebt_1.default.findOne({
+                    userId,
+                    creditor: debtCreditor,
+                }).session(session);
                 if (!debt) {
                     throw new Error("External debt record not found for this creditor.");
                 }

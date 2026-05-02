@@ -12,27 +12,25 @@ function createToken(userId: string) {
   });
 }
 
-function setAuthCookie(res: Response, token: string) {
+function getAuthCookieOptions() {
   const isProduction = process.env.NODE_ENV === "production";
+  const sameSite: "none" | "lax" = isProduction ? "none" : "lax";
 
-  res.cookie(COOKIE_NAME, token, {
+  return {
     httpOnly: true,
     secure: isProduction,
-    sameSite: isProduction ? "none" : "lax",
+    sameSite,
     path: "/",
     maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  };
+}
+
+function setAuthCookie(res: Response, token: string) {
+  res.cookie(COOKIE_NAME, token, getAuthCookieOptions());
 }
 
 function clearAuthCookie(res: Response) {
-  const isProduction = process.env.NODE_ENV === "production";
-
-  res.clearCookie(COOKIE_NAME, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? "none" : "lax",
-    path: "/",
-  });
+  res.clearCookie(COOKIE_NAME, getAuthCookieOptions());
 }
 
 function startOfDay(date: Date) {

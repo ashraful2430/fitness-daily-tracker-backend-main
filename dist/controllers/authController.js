@@ -10,27 +10,28 @@ exports.logout = logout;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const User_1 = __importDefault(require("../models/User"));
+const COOKIE_NAME = "token";
 function createToken(userId) {
     return jsonwebtoken_1.default.sign({ userId }, process.env.JWT_SECRET, {
-        expiresIn: "24h",
+        expiresIn: "7d",
     });
+}
+function getAuthCookieOptions() {
+    const isProduction = process.env.NODE_ENV === "production";
+    const sameSite = isProduction ? "none" : "lax";
+    return {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite,
+        path: "/",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+    };
 }
 function setAuthCookie(res, token) {
-    const isProduction = process.env.NODE_ENV === "production";
-    res.cookie("token", token, {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: isProduction ? "none" : "lax",
-        maxAge: 24 * 60 * 60 * 1000,
-    });
+    res.cookie(COOKIE_NAME, token, getAuthCookieOptions());
 }
 function clearAuthCookie(res) {
-    const isProduction = process.env.NODE_ENV === "production";
-    res.clearCookie("token", {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: isProduction ? "none" : "lax",
-    });
+    res.clearCookie(COOKIE_NAME, getAuthCookieOptions());
 }
 function startOfDay(date) {
     const value = new Date(date);
