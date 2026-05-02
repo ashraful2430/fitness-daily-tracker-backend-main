@@ -1,0 +1,788 @@
+import mongoose, { ClientSession } from "mongoose";
+import BalanceAccount, { BalanceAccountType } from "../models/BalanceAccount";
+import BalanceRecord from "../models/BalanceRecord";
+import TransactionLedger, {
+  TransactionSource,
+  TransactionType,
+} from "../models/TransactionLedger";
+import Expense from "../models/Expense";
+import SalaryMonth from "../models/SalaryMonth";
+import Loan, { LoanSourceType, LoanStatusType } from "../models/Loan";
+import LoanLedger from "../models/LoanLedger";
+import ExternalDebt from "../models/ExternalDebt";
+
+const BALANCE_SOURCE_PRIORITY: BalanceAccountType[] = [
+  "SALARY",
+  "CASH",
+  "BANK",
+  "EXTERNAL",
+];
+
+function compareBalanceSources(
+  a: { type: BalanceAccountType },
+  b: { type: BalanceAccountType },
+) {
+  return (
+    BALANCE_SOURCE_PRIORITY.indexOf(a.type) -
+    BALANCE_SOURCE_PRIORITY.indexOf(b.type)
+  );
+}
+
+async function recalculateTotalBalance(
+  userId: string,
+  session?: ClientSession,
+): Promise<number> {
+  const aggregation = BalanceAccount.aggregate([
+    { $match: { userId } },
+    { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
+  ]);
+
+  if (session) {
+    aggregation.session(session);
+  }
+
+  const result = await aggregation;
+  const total = result[0]?.totalAmount ?? 0;
+
+  await BalanceRecord.findOneAndUpdate(
+    { userId },
+    { userId, amount: total },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+      session,
+    },
+  );
+
+  return total;
+}
+
+async function allocateAmountAcrossBalances(
+  userId: string,
+  amount: number,
+  session: ClientSession,
+): Promise<void> {
+  const accounts = await BalanceAccount.find({ userId })
+    .session(session)
+    .sort({ type: 1 });
+
+  accounts.sort(compareBalanceSources);
+
+  let remaining = amount;
+
+  for (const account of accounts) {
+    if (remaining <= 0) {
+      break;
+    }
+
+    const deduction = Math.min(account.amount, remaining);
+    account.amount -= deduction;
+    remaining -= deduction;
+
+    if (account.amount <= 0) {
+      await BalanceAccount.deleteOne({ _id: account._id }).session(session);
+    } else {
+      await account.save({ session });
+    }
+  }
+
+  if (remaining > 0) {
+    throw new Error(
+      "Insufficient available balance to complete this transaction.",
+    );
+  }
+}
+
+function buildMonthYear(date: Date) {
+  return {
+    month: date.getMonth() + 1,
+    year: date.getFullYear(),
+  };
+}
+
+export async function getBalanceSources(userId: string) {
+  const [sources, summary] = await Promise.all([
+    BalanceAccount.find({ userId }).sort({ type: 1, createdAt: -1 }),
+    BalanceRecord.findOne({ userId }),
+  ]);
+
+  return {
+    totalBalance: summary?.amount ?? 0,
+    sources,
+  };
+}
+
+async function creditBalanceEntry(
+  userId: string,
+  type: BalanceAccountType,
+  amount: number,
+  session: ClientSession,
+) {
+  const account = await BalanceAccount.create(
+    [
+      {
+        userId,
+        type,
+        amount,
+      },
+    ],
+    { session },
+  );
+
+  await TransactionLedger.create(
+    [
+      {
+        userId,
+        type: "CREDIT",
+        source: "BALANCE_ADDED",
+        amount,
+        referenceId: account[0]._id.toString(),
+      },
+    ],
+    { session },
+  );
+
+  return account[0];
+}
+
+export async function addBalanceSource(
+  userId: string,
+  type: BalanceAccountType,
+  amount: number,
+) {
+  if (amount <= 0) {
+    throw new Error("Amount must be greater than zero.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let account;
+    await session.withTransaction(async () => {
+      account = await creditBalanceEntry(userId, type, amount, session);
+      await recalculateTotalBalance(userId, session);
+    });
+
+    return account;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function updateBalanceSource(id: string, amount: number) {
+  if (amount < 0) {
+    throw new Error("Amount cannot be negative.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let updated;
+    await session.withTransaction(async () => {
+      updated = await BalanceAccount.findOneAndUpdate(
+        { _id: id },
+        { amount },
+        {
+          new: true,
+          runValidators: true,
+          session,
+        },
+      );
+
+      if (!updated) {
+        throw new Error("Balance source not found.");
+      }
+
+      await TransactionLedger.create(
+        [
+          {
+            userId: updated.userId,
+            type: "CREDIT",
+            source: "BALANCE_ADDED",
+            amount,
+            referenceId: updated._id.toString(),
+          },
+        ],
+        { session },
+      );
+
+      await recalculateTotalBalance(updated.userId, session);
+    });
+
+    return updated as typeof updated;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function deleteBalanceSource(id: string) {
+  const session = await mongoose.startSession();
+
+  try {
+    let removed;
+    await session.withTransaction(async () => {
+      removed = await BalanceAccount.findOneAndDelete({ _id: id }).session(
+        session,
+      );
+      if (!removed) {
+        throw new Error("Balance source not found.");
+      }
+
+      await recalculateTotalBalance(removed.userId, session);
+    });
+
+    return removed;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function createExpense(
+  userId: string,
+  amount: number,
+  category: string,
+  note: string,
+  date: Date,
+) {
+  if (amount <= 0) {
+    throw new Error("Expense amount must be greater than zero.");
+  }
+
+  if (!category.trim()) {
+    throw new Error("Expense category is required.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let expense: any;
+
+    await session.withTransaction(async () => {
+      const balanceRecord = await BalanceRecord.findOne({ userId }).session(
+        session,
+      );
+      const available = balanceRecord?.amount ?? 0;
+
+      if (amount > available) {
+        throw new Error("Insufficient available balance for this expense.");
+      }
+
+      await allocateAmountAcrossBalances(userId, amount, session);
+
+      expense = await Expense.create(
+        [
+          {
+            userId,
+            amount,
+            category: category.toLowerCase().trim(),
+            description: note.trim(),
+            date,
+          },
+        ],
+        { session },
+      );
+
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "DEBIT",
+            source: "EXPENSE",
+            amount,
+            referenceId: expense[0]._id.toString(),
+          },
+        ],
+        { session },
+      );
+
+      const { month, year } = buildMonthYear(date);
+      const salaryMonth = await SalaryMonth.findOne({
+        userId,
+        month,
+        year,
+      }).session(session);
+      if (salaryMonth) {
+        salaryMonth.totalSpent += amount;
+        salaryMonth.remainingSalary = Math.max(
+          salaryMonth.totalSalary - salaryMonth.totalSpent,
+          0,
+        );
+        await salaryMonth.save({ session });
+      }
+
+      await recalculateTotalBalance(userId, session);
+    });
+
+    return expense[0];
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function getExpenses(
+  userId: string,
+  filters: {
+    startDate?: string;
+    endDate?: string;
+    category?: string;
+    page?: number;
+    limit?: number;
+  },
+) {
+  const query: any = { userId };
+  const { startDate, endDate, category } = filters;
+
+  if (category) {
+    query.category = category.toLowerCase().trim();
+  }
+
+  if (startDate || endDate) {
+    query.date = {};
+    if (startDate) {
+      query.date.$gte = new Date(startDate);
+    }
+    if (endDate) {
+      query.date.$lte = new Date(endDate);
+    }
+  }
+
+  const page = filters.page && filters.page > 0 ? filters.page : 1;
+  const limit =
+    filters.limit && filters.limit > 0 ? Math.min(filters.limit, 100) : 20;
+  const skip = (page - 1) * limit;
+
+  const [expenses, total] = await Promise.all([
+    Expense.find(query)
+      .sort({ date: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Expense.countDocuments(query),
+  ]);
+
+  return {
+    expenses,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(Math.ceil(total / limit), 1),
+    },
+  };
+}
+
+export async function getMonthlyExpenseSummary(
+  userId: string,
+  year?: number,
+  month?: number,
+) {
+  const now = new Date();
+  const targetYear = year ?? now.getFullYear();
+  const targetMonth = month ?? now.getMonth() + 1;
+
+  const start = new Date(targetYear, targetMonth - 1, 1);
+  const end = new Date(targetYear, targetMonth, 1);
+
+  const summary = await Expense.aggregate([
+    {
+      $match: {
+        userId,
+        date: {
+          $gte: start,
+          $lt: end,
+        },
+      },
+    },
+    {
+      $group: {
+        _id: "$category",
+        totalSpent: { $sum: "$amount" },
+        count: { $sum: 1 },
+      },
+    },
+    { $sort: { totalSpent: -1 } },
+  ]);
+
+  const totalSpent = summary.reduce((sum, item) => sum + item.totalSpent, 0);
+
+  return {
+    month: targetMonth,
+    year: targetYear,
+    totalSpent,
+    breakdown: summary,
+  };
+}
+
+export async function addSalary(userId: string, amount: number, date: Date) {
+  if (amount <= 0) {
+    throw new Error("Salary amount must be greater than zero.");
+  }
+
+  const { month, year } = buildMonthYear(date);
+  const session = await mongoose.startSession();
+
+  try {
+    let salaryMonth: any;
+    await session.withTransaction(async () => {
+      const existing = await SalaryMonth.findOne({
+        userId,
+        month,
+        year,
+      }).session(session);
+      if (existing) {
+        existing.totalSalary += amount;
+        existing.remainingSalary = Math.max(
+          existing.remainingSalary + amount,
+          0,
+        );
+        await existing.save({ session });
+        salaryMonth = existing;
+      } else {
+        const created = await SalaryMonth.create(
+          [
+            {
+              userId,
+              month,
+              year,
+              totalSalary: amount,
+              totalSpent: 0,
+              remainingSalary: amount,
+            },
+          ],
+          { session },
+        );
+        salaryMonth = created[0];
+      }
+
+      await creditBalanceEntry(userId, "SALARY", amount, session);
+
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "CREDIT",
+            source: "SALARY_ADDED",
+            amount,
+            referenceId: salaryMonth._id.toString(),
+          },
+        ],
+        { session },
+      );
+    });
+
+    return salaryMonth;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function getCurrentSalaryMonth(userId: string) {
+  const { month, year } = buildMonthYear(new Date());
+  const salaryMonth = await SalaryMonth.findOne({ userId, month, year });
+
+  if (salaryMonth) {
+    return salaryMonth;
+  }
+
+  return SalaryMonth.create({
+    userId,
+    month,
+    year,
+    totalSalary: 0,
+    totalSpent: 0,
+    remainingSalary: 0,
+  });
+}
+
+export async function getSalaryHistory(
+  userId: string,
+  page?: number,
+  limit?: number,
+) {
+  const pageNumber = page && page > 0 ? page : 1;
+  const limitNumber = limit && limit > 0 ? Math.min(limit, 50) : 20;
+  const skip = (pageNumber - 1) * limitNumber;
+
+  const [history, total] = await Promise.all([
+    SalaryMonth.find({ userId })
+      .sort({ year: -1, month: -1 })
+      .skip(skip)
+      .limit(limitNumber),
+    SalaryMonth.countDocuments({ userId }),
+  ]);
+
+  return {
+    history,
+    pagination: {
+      page: pageNumber,
+      limit: limitNumber,
+      total,
+      totalPages: Math.max(Math.ceil(total / limitNumber), 1),
+    },
+  };
+}
+
+export async function createLoan(
+  userId: string,
+  borrower: string,
+  amount: number,
+  sourceType: LoanSourceType,
+  creditor?: string,
+) {
+  if (amount <= 0) {
+    throw new Error("Loan amount must be greater than zero.");
+  }
+  if (!borrower.trim()) {
+    throw new Error("Borrower is required.");
+  }
+  if (sourceType === "BORROWED" && !creditor?.trim()) {
+    throw new Error("Creditor is required for borrowed loans.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let loan: any;
+    await session.withTransaction(async () => {
+      if (sourceType === "PERSONAL") {
+        const balanceRecord = await BalanceRecord.findOne({ userId }).session(
+          session,
+        );
+        const available = balanceRecord?.amount ?? 0;
+        if (amount > available) {
+          throw new Error("Insufficient balance to fund the personal loan.");
+        }
+
+        await allocateAmountAcrossBalances(userId, amount, session);
+      }
+
+      loan = await Loan.create(
+        [
+          {
+            userId,
+            borrower: borrower.trim(),
+            amount,
+            remainingAmount: amount,
+            sourceType,
+            status: "ACTIVE" as LoanStatusType,
+          },
+        ],
+        { session },
+      );
+
+      await LoanLedger.create(
+        [
+          {
+            loanId: loan[0]._id.toString(),
+            type: "DISBURSEMENT",
+            amount,
+          },
+        ],
+        { session },
+      );
+
+      if (sourceType === "BORROWED") {
+        await ExternalDebt.findOneAndUpdate(
+          {
+            userId,
+            creditor: creditor!.trim(),
+          },
+          {
+            userId,
+            creditor: creditor!.trim(),
+            $inc: { totalAmount: amount, remainingAmount: amount },
+          },
+          {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert: true,
+            session,
+          },
+        );
+      }
+
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "DEBIT",
+            source: "LOAN_GIVEN",
+            amount,
+            referenceId: loan[0]._id.toString(),
+          },
+        ],
+        { session },
+      );
+
+      await recalculateTotalBalance(userId, session);
+    });
+
+    return loan[0];
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function repayLoan(
+  userId: string,
+  loanId: string,
+  amount: number,
+  creditor?: string,
+) {
+  if (amount <= 0) {
+    throw new Error("Repayment amount must be greater than zero.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let updatedLoan;
+    await session.withTransaction(async () => {
+      const loan = await Loan.findOne({ _id: loanId, userId }).session(session);
+      if (!loan) {
+        throw new Error("Loan not found.");
+      }
+
+      if (amount > loan.remainingAmount) {
+        throw new Error("Repayment cannot exceed the remaining loan balance.");
+      }
+
+      loan.remainingAmount -= amount;
+      loan.status = loan.remainingAmount === 0 ? "CLOSED" : "PARTIAL";
+      await loan.save({ session });
+
+      await LoanLedger.create(
+        [
+          {
+            loanId: loan._id.toString(),
+            type: "REPAYMENT",
+            amount,
+          },
+        ],
+        { session },
+      );
+
+      if (loan.sourceType === "PERSONAL") {
+        const cashEntry = await BalanceAccount.findOneAndUpdate(
+          { userId, type: "CASH" },
+          { $inc: { amount } },
+          { new: true, upsert: true, setDefaultsOnInsert: true, session },
+        );
+
+        if (!cashEntry) {
+          throw new Error("Failed to credit loan repayment to cash balance.");
+        }
+      } else {
+        const debtCreditor = creditor?.trim();
+        if (!debtCreditor) {
+          throw new Error("Creditor is required to repay borrowed debt.");
+        }
+
+        const debt = await ExternalDebt.findOne({
+          userId,
+          creditor: debtCreditor,
+        }).session(session);
+        if (!debt) {
+          throw new Error("External debt record not found for this creditor.");
+        }
+
+        if (amount > debt.remainingAmount) {
+          throw new Error(
+            "Repayment cannot exceed the remaining external debt.",
+          );
+        }
+
+        debt.remainingAmount -= amount;
+        await debt.save({ session });
+      }
+
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "CREDIT",
+            source: "LOAN_REPAID",
+            amount,
+            referenceId: loan._id.toString(),
+          },
+        ],
+        { session },
+      );
+
+      await recalculateTotalBalance(userId, session);
+      updatedLoan = loan;
+    });
+
+    return updatedLoan;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function getLoans(
+  userId: string,
+  filters: { status?: string; page?: number; limit?: number },
+) {
+  const query: any = { userId };
+  if (filters.status) {
+    query.status = filters.status.toUpperCase();
+  }
+
+  const page = filters.page && filters.page > 0 ? filters.page : 1;
+  const limit =
+    filters.limit && filters.limit > 0 ? Math.min(filters.limit, 100) : 20;
+  const skip = (page - 1) * limit;
+
+  const [loans, total] = await Promise.all([
+    Loan.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Loan.countDocuments(query),
+  ]);
+
+  return {
+    loans,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(Math.ceil(total / limit), 1),
+    },
+  };
+}
+
+export async function getDebts(userId: string) {
+  const debts = await ExternalDebt.find({ userId }).sort({ updatedAt: -1 });
+  return debts;
+}
+
+export async function getSummary(userId: string) {
+  const [balanceRecord, expenseStats, loanStats, totalDebt] = await Promise.all(
+    [
+      BalanceRecord.findOne({ userId }),
+      Expense.aggregate([
+        { $match: { userId } },
+        { $group: { _id: null, totalExpenses: { $sum: "$amount" } } },
+      ]),
+      Loan.aggregate([
+        { $match: { userId } },
+        { $group: { _id: null, totalLoans: { $sum: "$amount" } } },
+      ]),
+      ExternalDebt.aggregate([
+        { $match: { userId } },
+        { $group: { _id: null, totalDebt: { $sum: "$remainingAmount" } } },
+      ]),
+    ],
+  );
+
+  const totalBalance = balanceRecord?.amount ?? 0;
+  const totalExpenses = expenseStats[0]?.totalExpenses ?? 0;
+  const totalLoansGiven = loanStats[0]?.totalLoans ?? 0;
+  const totalExternalDebt = totalDebt[0]?.totalDebt ?? 0;
+
+  return {
+    totalBalance,
+    totalExpenses,
+    totalLoansGiven,
+    totalDebt: totalExternalDebt,
+    netPosition: totalBalance - totalExternalDebt,
+  };
+}

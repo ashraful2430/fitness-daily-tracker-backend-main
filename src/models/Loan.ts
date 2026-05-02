@@ -1,14 +1,17 @@
 import { Schema, model } from "mongoose";
 
-interface ILoan {
+export const LOAN_SOURCE_TYPES = ["PERSONAL", "BORROWED"] as const;
+export const LOAN_STATUS_TYPES = ["ACTIVE", "PARTIAL", "CLOSED"] as const;
+export type LoanSourceType = (typeof LOAN_SOURCE_TYPES)[number];
+export type LoanStatusType = (typeof LOAN_STATUS_TYPES)[number];
+
+export interface ILoan {
   userId: string;
-  lender: string;
-  reason: string;
+  borrower: string;
   amount: number;
-  paidAmount: number;
-  status: "open" | "paid";
-  paidAt?: Date;
-  date: Date;
+  remainingAmount: number;
+  sourceType: LoanSourceType;
+  status: LoanStatusType;
 }
 
 const loanSchema = new Schema<ILoan>(
@@ -17,13 +20,9 @@ const loanSchema = new Schema<ILoan>(
       type: String,
       required: true,
       trim: true,
+      index: true,
     },
-    lender: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    reason: {
+    borrower: {
       type: String,
       required: true,
       trim: true,
@@ -33,25 +32,21 @@ const loanSchema = new Schema<ILoan>(
       required: true,
       min: 0,
     },
-    paidAmount: {
+    remainingAmount: {
       type: Number,
       required: true,
-      default: 0,
       min: 0,
+    },
+    sourceType: {
+      type: String,
+      required: true,
+      enum: LOAN_SOURCE_TYPES,
     },
     status: {
       type: String,
       required: true,
-      enum: ["open", "paid"],
-      default: "open",
-    },
-    paidAt: {
-      type: Date,
-    },
-    date: {
-      type: Date,
-      required: true,
-      default: Date.now,
+      enum: LOAN_STATUS_TYPES,
+      default: "ACTIVE",
     },
   },
   {
@@ -59,6 +54,6 @@ const loanSchema = new Schema<ILoan>(
   },
 );
 
-loanSchema.index({ userId: 1 });
+loanSchema.index({ userId: 1, status: 1 });
 
 export default model<ILoan>("Loan", loanSchema);
