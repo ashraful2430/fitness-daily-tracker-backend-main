@@ -1,6 +1,11 @@
 import { Schema, model, Types } from "mongoose";
 
-export const BALANCE_ACCOUNT_TYPES = ["CASH", "BANK", "SALARY", "EXTERNAL"] as const;
+export const BALANCE_ACCOUNT_TYPES = [
+  "CASH",
+  "BANK",
+  "SALARY",
+  "EXTERNAL",
+] as const;
 export type BalanceAccountType = (typeof BALANCE_ACCOUNT_TYPES)[number];
 
 export interface IBalanceAccount {
@@ -26,7 +31,6 @@ const balanceAccountSchema = new Schema<IBalanceAccount>(
     amount: {
       type: Number,
       required: true,
-      min: 0,
     },
   },
   { timestamps: true },

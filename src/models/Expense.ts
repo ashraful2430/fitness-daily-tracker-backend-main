@@ -6,6 +6,7 @@ interface IExpense {
   description: string;
   category: string;
   date: Date;
+  note?: string;
 }
 
 const expenseSchema = new Schema<IExpense>(
@@ -38,8 +39,19 @@ const expenseSchema = new Schema<IExpense>(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   },
 );
+
+expenseSchema
+  .virtual("note")
+  .get(function (this: IExpense) {
+    return this.description;
+  })
+  .set(function (this: IExpense, value: string) {
+    this.description = value;
+  });
 
 expenseSchema.index({ userId: 1, date: -1 });
 expenseSchema.index({ userId: 1, category: 1 });

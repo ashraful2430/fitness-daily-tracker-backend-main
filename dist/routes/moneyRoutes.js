@@ -16,6 +16,8 @@ router.patch("/balance/update/:id", financeController_1.updateBalance);
 router.delete("/balance/:id", financeController_1.deleteBalance);
 router.get("/balance", financeController_1.getBalance);
 router.post("/expenses", financeController_1.addExpense);
+router.patch("/expenses/:id", financeController_1.updateExpenseEntry);
+router.delete("/expenses/:id", financeController_1.deleteExpenseEntry);
 router.get("/expenses", financeController_1.getExpensesList);
 router.get("/expenses/monthly-summary", financeController_1.getMonthlyExpenseSummary);
 router.post("/salary", financeController_1.addSalaryEntry);

@@ -5,10 +5,12 @@ const mongoose_1 = require("mongoose");
 exports.TRANSACTION_TYPES = ["CREDIT", "DEBIT"];
 exports.TRANSACTION_SOURCES = [
     "EXPENSE",
+    "EXPENSE_REFUND",
     "LOAN_GIVEN",
     "LOAN_REPAID",
     "SALARY_ADDED",
     "BALANCE_ADDED",
+    "BALANCE_ADJUSTMENT",
 ];
 const transactionLedgerSchema = new mongoose_1.Schema({
     userId: {

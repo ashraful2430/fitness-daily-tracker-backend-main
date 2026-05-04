@@ -3,16 +3,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getFinanceSummary = exports.getDebtList = exports.getLoanList = exports.repayLoanEntry = exports.createLoanEntry = exports.getSalaryHistoryList = exports.getCurrentSalary = exports.addSalaryEntry = exports.getMonthlyExpenseSummary = exports.getExpensesList = exports.addExpense = exports.deleteCategory = exports.getCategories = exports.createCategory = exports.getBalance = exports.deleteBalance = exports.updateBalance = exports.addBalance = void 0;
+exports.getFinanceSummary = exports.getDebtList = exports.getLoanList = exports.repayLoanEntry = exports.createLoanEntry = exports.getSalaryHistoryList = exports.getCurrentSalary = exports.addSalaryEntry = exports.getMonthlyExpenseSummary = exports.deleteExpenseEntry = exports.updateExpenseEntry = exports.getExpensesList = exports.addExpense = exports.deleteCategory = exports.getCategories = exports.createCategory = exports.getBalance = exports.deleteBalance = exports.updateBalance = exports.addBalance = void 0;
 const Category_1 = __importDefault(require("../models/Category"));
 const Expense_1 = __importDefault(require("../models/Expense"));
 const BalanceAccount_1 = require("../models/BalanceAccount");
 const financeService_1 = require("../services/financeService");
+const financeUtils_1 = require("../utils/financeUtils");
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : "Server error";
-}
-function normalizeCategoryName(name) {
-    return name.trim().toLowerCase();
 }
 function getAuthorizedUserId(req, requestedUserId) {
     if (!req.userId) {
@@ -168,12 +166,15 @@ const createCategory = async (req, res) => {
             .json({ success: false, message: "Category name is required." });
     }
     try {
-        const normalized = normalizeCategoryName(name);
+        const normalized = (0, financeUtils_1.normalizeCategoryName)(name);
         const category = await Category_1.default.findOneAndUpdate({ userId: auth.userId, name: normalized }, { userId: auth.userId, name: normalized }, { new: true, upsert: true, setDefaultsOnInsert: true });
         return res.status(200).json({
             success: true,
             message: "Category saved successfully.",
-            data: category,
+            data: {
+                ...(category?.toObject ? category.toObject() : category),
+                label: (0, financeUtils_1.formatCategoryLabel)(normalized),
+            },
         });
     }
     catch (error) {
@@ -195,7 +196,13 @@ const getCategories = async (req, res) => {
         const categories = await Category_1.default.find({ userId: auth.userId }).sort({
             name: 1,
         });
-        return res.status(200).json({ success: true, data: categories });
+        return res.status(200).json({
+            success: true,
+            data: categories.map((category) => ({
+                ...category.toObject(),
+                label: (0, financeUtils_1.formatCategoryLabel)(category.name),
+            })),
+        });
     }
     catch (error) {
         return res.status(500).json({
@@ -219,7 +226,7 @@ const deleteCategory = async (req, res) => {
             .json({ success: false, message: "Category name is required." });
     }
     try {
-        const normalized = normalizeCategoryName(categoryName);
+        const normalized = (0, financeUtils_1.normalizeCategoryName)(categoryName);
         const expenseCount = await Expense_1.default.countDocuments({
             userId: auth.userId,
             category: normalized,
@@ -282,7 +289,7 @@ const addExpense = async (req, res) => {
             .json({ success: false, message: "Expense date is invalid." });
     }
     try {
-        const normalizedCategory = normalizeCategoryName(category);
+        const normalizedCategory = (0, financeUtils_1.normalizeCategoryName)(category);
         const existingCategory = await Category_1.default.findOne({
             userId: auth.userId,
             name: normalizedCategory,
@@ -326,11 +333,13 @@ const getExpensesList = async (req, res) => {
             startDate,
             endDate,
         });
-        return res
-            .status(200)
-            .json({
+        const expenses = result.expenses.map((expense) => ({
+            ...expense.toObject({ virtuals: true }),
+            categoryLabel: (0, financeUtils_1.formatCategoryLabel)(expense.category),
+        }));
+        return res.status(200).json({
             success: true,
-            data: result.expenses,
+            data: expenses,
             pagination: result.pagination,
         });
     }
@@ -341,6 +350,84 @@ const getExpensesList = async (req, res) => {
     }
 };
 exports.getExpensesList = getExpensesList;
+const updateExpenseEntry = async (req, res) => {
+    const auth = getAuthorizedUserId(req);
+    if ("error" in auth) {
+        return res
+            .status(auth.status)
+            .json({ success: false, message: auth.error });
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const { amount, category, note, date } = req.body;
+    if (!id) {
+        return res
+            .status(400)
+            .json({ success: false, message: "Expense id is required." });
+    }
+    if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
+        return res
+            .status(400)
+            .json({ success: false, message: "A valid amount is required." });
+    }
+    if (!category?.trim()) {
+        return res
+            .status(400)
+            .json({ success: false, message: "Expense category is required." });
+    }
+    if (!note?.trim()) {
+        return res
+            .status(400)
+            .json({ success: false, message: "Expense note is required." });
+    }
+    const expenseDate = date ? new Date(date) : new Date();
+    if (Number.isNaN(expenseDate.getTime())) {
+        return res
+            .status(400)
+            .json({ success: false, message: "Expense date is invalid." });
+    }
+    try {
+        const updated = await (0, financeService_1.updateExpense)(auth.userId, id, amount, (0, financeUtils_1.normalizeCategoryName)(category), note, expenseDate);
+        return res.status(200).json({
+            success: true,
+            message: "Expense updated successfully.",
+            data: updated,
+        });
+    }
+    catch (error) {
+        return res
+            .status(400)
+            .json({ success: false, message: getErrorMessage(error) });
+    }
+};
+exports.updateExpenseEntry = updateExpenseEntry;
+const deleteExpenseEntry = async (req, res) => {
+    const auth = getAuthorizedUserId(req);
+    if ("error" in auth) {
+        return res
+            .status(auth.status)
+            .json({ success: false, message: auth.error });
+    }
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    if (!id) {
+        return res
+            .status(400)
+            .json({ success: false, message: "Expense id is required." });
+    }
+    try {
+        const deleted = await (0, financeService_1.deleteExpense)(auth.userId, id);
+        return res.status(200).json({
+            success: true,
+            message: "Expense deleted successfully.",
+            data: deleted,
+        });
+    }
+    catch (error) {
+        return res
+            .status(400)
+            .json({ success: false, message: getErrorMessage(error) });
+    }
+};
+exports.deleteExpenseEntry = deleteExpenseEntry;
 const getMonthlyExpenseSummary = async (req, res) => {
     const auth = getAuthorizedUserId(req);
     if ("error" in auth) {
@@ -382,9 +469,7 @@ const addSalaryEntry = async (req, res) => {
     }
     try {
         const salary = await (0, financeService_1.addSalary)(auth.userId, amount, salaryDate);
-        return res
-            .status(201)
-            .json({
+        return res.status(201).json({
             success: true,
             message: "Salary added successfully.",
             data: salary,
@@ -426,9 +511,7 @@ const getSalaryHistoryList = async (req, res) => {
     const limit = Number(req.query.limit) || 20;
     try {
         const result = await (0, financeService_1.getSalaryHistory)(auth.userId, page, limit);
-        return res
-            .status(200)
-            .json({
+        return res.status(200).json({
             success: true,
             data: result.history,
             pagination: result.pagination,
@@ -460,18 +543,14 @@ const createLoanEntry = async (req, res) => {
             .json({ success: false, message: "A valid loan amount is required." });
     }
     if (!sourceType || !["PERSONAL", "BORROWED"].includes(sourceType)) {
-        return res
-            .status(400)
-            .json({
+        return res.status(400).json({
             success: false,
             message: "sourceType must be PERSONAL or BORROWED.",
         });
     }
     try {
         const loan = await (0, financeService_1.createLoan)(auth.userId, borrower, amount, sourceType, creditor);
-        return res
-            .status(201)
-            .json({
+        return res.status(201).json({
             success: true,
             message: "Loan created successfully.",
             data: loan,
@@ -501,9 +580,7 @@ const repayLoanEntry = async (req, res) => {
             .json({ success: false, message: "Loan id is required." });
     }
     if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
-        return res
-            .status(400)
-            .json({
+        return res.status(400).json({
             success: false,
             message: "A valid repayment amount is required.",
         });
@@ -511,9 +588,7 @@ const repayLoanEntry = async (req, res) => {
     const creditorValue = Array.isArray(creditor) ? creditor[0] : creditor;
     try {
         const loan = await (0, financeService_1.repayLoan)(auth.userId, loanId, amount, creditorValue);
-        return res
-            .status(200)
-            .json({
+        return res.status(200).json({
             success: true,
             message: "Loan repayment recorded successfully.",
             data: loan,
@@ -538,9 +613,7 @@ const getLoanList = async (req, res) => {
     const limit = Number(req.query.limit) || 20;
     try {
         const result = await (0, financeService_1.getLoans)(auth.userId, { status, page, limit });
-        return res
-            .status(200)
-            .json({
+        return res.status(200).json({
             success: true,
             data: result.loans,
             pagination: result.pagination,

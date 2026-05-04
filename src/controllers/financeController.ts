@@ -10,6 +10,8 @@ import {
   deleteBalanceSource,
   getBalanceSources,
   createExpense,
+  updateExpense,
+  deleteExpense,
   getExpenses,
   getMonthlyExpenseSummary as fetchMonthlyExpenseSummary,
   addSalary,
@@ -21,14 +23,14 @@ import {
   getDebts,
   getSummary,
 } from "../services/financeService";
+import {
+  formatCategoryLabel,
+  normalizeCategoryName,
+} from "../utils/financeUtils";
 import { AuthRequest } from "../middleware/authMiddleware";
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Server error";
-}
-
-function normalizeCategoryName(name: string) {
-  return name.trim().toLowerCase();
 }
 
 function getAuthorizedUserId(
@@ -215,7 +217,10 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
     return res.status(200).json({
       success: true,
       message: "Category saved successfully.",
-      data: category,
+      data: {
+        ...(category?.toObject ? category.toObject() : category),
+        label: formatCategoryLabel(normalized),
+      },
     });
   } catch (error: unknown) {
     return res.status(500).json({
@@ -237,7 +242,13 @@ export const getCategories = async (req: AuthRequest, res: Response) => {
     const categories = await Category.find({ userId: auth.userId }).sort({
       name: 1,
     });
-    return res.status(200).json({ success: true, data: categories });
+    return res.status(200).json({
+      success: true,
+      data: categories.map((category) => ({
+        ...category.toObject(),
+        label: formatCategoryLabel(category.name),
+      })),
+    });
   } catch (error: unknown) {
     return res.status(500).json({
       success: false,
@@ -394,16 +405,113 @@ export const getExpensesList = async (req: AuthRequest, res: Response) => {
       endDate,
     });
 
-    return res
-      .status(200)
-      .json({
-        success: true,
-        data: result.expenses,
-        pagination: result.pagination,
-      });
+    const expenses = result.expenses.map((expense) => ({
+      ...expense.toObject({ virtuals: true }),
+      categoryLabel: formatCategoryLabel(expense.category),
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: expenses,
+      pagination: result.pagination,
+    });
   } catch (error: unknown) {
     return res
       .status(500)
+      .json({ success: false, message: getErrorMessage(error) });
+  }
+};
+
+export const updateExpenseEntry = async (req: AuthRequest, res: Response) => {
+  const auth = getAuthorizedUserId(req);
+  if ("error" in auth) {
+    return res
+      .status(auth.status)
+      .json({ success: false, message: auth.error });
+  }
+
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const { amount, category, note, date } = req.body as {
+    amount?: number;
+    category?: string;
+    note?: string;
+    date?: string;
+  };
+
+  if (!id) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Expense id is required." });
+  }
+  if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
+    return res
+      .status(400)
+      .json({ success: false, message: "A valid amount is required." });
+  }
+  if (!category?.trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Expense category is required." });
+  }
+  if (!note?.trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Expense note is required." });
+  }
+
+  const expenseDate = date ? new Date(date) : new Date();
+  if (Number.isNaN(expenseDate.getTime())) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Expense date is invalid." });
+  }
+
+  try {
+    const updated = await updateExpense(
+      auth.userId,
+      id,
+      amount,
+      normalizeCategoryName(category),
+      note,
+      expenseDate,
+    );
+    return res.status(200).json({
+      success: true,
+      message: "Expense updated successfully.",
+      data: updated,
+    });
+  } catch (error: unknown) {
+    return res
+      .status(400)
+      .json({ success: false, message: getErrorMessage(error) });
+  }
+};
+
+export const deleteExpenseEntry = async (req: AuthRequest, res: Response) => {
+  const auth = getAuthorizedUserId(req);
+  if ("error" in auth) {
+    return res
+      .status(auth.status)
+      .json({ success: false, message: auth.error });
+  }
+
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  if (!id) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Expense id is required." });
+  }
+
+  try {
+    const deleted = await deleteExpense(auth.userId, id);
+    return res.status(200).json({
+      success: true,
+      message: "Expense deleted successfully.",
+      data: deleted,
+    });
+  } catch (error: unknown) {
+    return res
+      .status(400)
       .json({ success: false, message: getErrorMessage(error) });
   }
 };
@@ -456,13 +564,11 @@ export const addSalaryEntry = async (req: AuthRequest, res: Response) => {
 
   try {
     const salary = await addSalary(auth.userId, amount, salaryDate);
-    return res
-      .status(201)
-      .json({
-        success: true,
-        message: "Salary added successfully.",
-        data: salary,
-      });
+    return res.status(201).json({
+      success: true,
+      message: "Salary added successfully.",
+      data: salary,
+    });
   } catch (error: unknown) {
     return res
       .status(400)
@@ -501,13 +607,11 @@ export const getSalaryHistoryList = async (req: AuthRequest, res: Response) => {
 
   try {
     const result = await getSalaryHistory(auth.userId, page, limit);
-    return res
-      .status(200)
-      .json({
-        success: true,
-        data: result.history,
-        pagination: result.pagination,
-      });
+    return res.status(200).json({
+      success: true,
+      data: result.history,
+      pagination: result.pagination,
+    });
   } catch (error: unknown) {
     return res
       .status(500)
@@ -541,12 +645,10 @@ export const createLoanEntry = async (req: AuthRequest, res: Response) => {
       .json({ success: false, message: "A valid loan amount is required." });
   }
   if (!sourceType || !["PERSONAL", "BORROWED"].includes(sourceType)) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "sourceType must be PERSONAL or BORROWED.",
-      });
+    return res.status(400).json({
+      success: false,
+      message: "sourceType must be PERSONAL or BORROWED.",
+    });
   }
 
   try {
@@ -557,13 +659,11 @@ export const createLoanEntry = async (req: AuthRequest, res: Response) => {
       sourceType as any,
       creditor,
     );
-    return res
-      .status(201)
-      .json({
-        success: true,
-        message: "Loan created successfully.",
-        data: loan,
-      });
+    return res.status(201).json({
+      success: true,
+      message: "Loan created successfully.",
+      data: loan,
+    });
   } catch (error: unknown) {
     return res
       .status(400)
@@ -593,25 +693,21 @@ export const repayLoanEntry = async (req: AuthRequest, res: Response) => {
       .json({ success: false, message: "Loan id is required." });
   }
   if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "A valid repayment amount is required.",
-      });
+    return res.status(400).json({
+      success: false,
+      message: "A valid repayment amount is required.",
+    });
   }
 
   const creditorValue = Array.isArray(creditor) ? creditor[0] : creditor;
 
   try {
     const loan = await repayLoan(auth.userId, loanId, amount, creditorValue);
-    return res
-      .status(200)
-      .json({
-        success: true,
-        message: "Loan repayment recorded successfully.",
-        data: loan,
-      });
+    return res.status(200).json({
+      success: true,
+      message: "Loan repayment recorded successfully.",
+      data: loan,
+    });
   } catch (error: unknown) {
     return res
       .status(400)
@@ -634,13 +730,11 @@ export const getLoanList = async (req: AuthRequest, res: Response) => {
 
   try {
     const result = await getLoans(auth.userId, { status, page, limit });
-    return res
-      .status(200)
-      .json({
-        success: true,
-        data: result.loans,
-        pagination: result.pagination,
-      });
+    return res.status(200).json({
+      success: true,
+      data: result.loans,
+      pagination: result.pagination,
+    });
   } catch (error: unknown) {
     return res
       .status(500)

@@ -2,6 +2,8 @@ import express from "express";
 import {
   createCategory,
   addExpense,
+  updateExpenseEntry,
+  deleteExpenseEntry,
   getCategories,
   deleteCategory,
   addBalance,
@@ -35,6 +37,8 @@ router.delete("/balance/:id", deleteBalance);
 router.get("/balance", getBalance);
 
 router.post("/expenses", addExpense);
+router.patch("/expenses/:id", updateExpenseEntry);
+router.delete("/expenses/:id", deleteExpenseEntry);
 router.get("/expenses", getExpensesList);
 router.get("/expenses/monthly-summary", getMonthlyExpenseSummary);
 

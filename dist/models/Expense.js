@@ -29,6 +29,16 @@ const expenseSchema = new mongoose_1.Schema({
     },
 }, {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+});
+expenseSchema
+    .virtual("note")
+    .get(function () {
+    return this.description;
+})
+    .set(function (value) {
+    this.description = value;
 });
 expenseSchema.index({ userId: 1, date: -1 });
 expenseSchema.index({ userId: 1, category: 1 });

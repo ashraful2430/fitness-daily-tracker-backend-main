@@ -5,10 +5,12 @@ export type TransactionType = (typeof TRANSACTION_TYPES)[number];
 
 export const TRANSACTION_SOURCES = [
   "EXPENSE",
+  "EXPENSE_REFUND",
   "LOAN_GIVEN",
   "LOAN_REPAID",
   "SALARY_ADDED",
   "BALANCE_ADDED",
+  "BALANCE_ADJUSTMENT",
 ] as const;
 export type TransactionSource = (typeof TRANSACTION_SOURCES)[number];
 

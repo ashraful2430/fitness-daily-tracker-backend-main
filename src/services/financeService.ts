@@ -1,10 +1,15 @@
 import mongoose, { ClientSession } from "mongoose";
 import BalanceAccount, { BalanceAccountType } from "../models/BalanceAccount";
 import BalanceRecord from "../models/BalanceRecord";
+import Category from "../models/Category";
 import TransactionLedger, {
   TransactionSource,
   TransactionType,
 } from "../models/TransactionLedger";
+import {
+  formatCategoryLabel,
+  normalizeCategoryName,
+} from "../utils/financeUtils";
 import Expense from "../models/Expense";
 import SalaryMonth from "../models/SalaryMonth";
 import Loan, { LoanSourceType, LoanStatusType } from "../models/Loan";
@@ -102,13 +107,16 @@ function buildMonthYear(date: Date) {
 }
 
 export async function getBalanceSources(userId: string) {
-  const [sources, summary] = await Promise.all([
+  const [sources, balanceSummary] = await Promise.all([
     BalanceAccount.find({ userId }).sort({ type: 1, createdAt: -1 }),
-    BalanceRecord.findOne({ userId }),
+    BalanceAccount.aggregate([
+      { $match: { userId } },
+      { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
+    ]),
   ]);
 
   return {
-    totalBalance: summary?.amount ?? 0,
+    totalBalance: balanceSummary[0]?.totalAmount ?? 0,
     sources,
   };
 }
@@ -171,46 +179,52 @@ export async function addBalanceSource(
 }
 
 export async function updateBalanceSource(id: string, amount: number) {
-  if (amount < 0) {
-    throw new Error("Amount cannot be negative.");
-  }
-
   const session = await mongoose.startSession();
 
   try {
-    let updated;
+    let adjustment;
     await session.withTransaction(async () => {
-      updated = await BalanceAccount.findOneAndUpdate(
-        { _id: id },
-        { amount },
-        {
-          new: true,
-          runValidators: true,
-          session,
-        },
+      const existing = await BalanceAccount.findOne({ _id: id }).session(
+        session,
       );
-
-      if (!updated) {
+      if (!existing) {
         throw new Error("Balance source not found.");
       }
 
-      await TransactionLedger.create(
-        [
-          {
-            userId: updated.userId,
-            type: "CREDIT",
-            source: "BALANCE_ADDED",
-            amount,
-            referenceId: updated._id.toString(),
-          },
-        ],
-        { session },
-      );
+      const delta = amount - existing.amount;
+      if (delta === 0) {
+        adjustment = existing;
+      } else {
+        const created = await BalanceAccount.create(
+          [
+            {
+              userId: existing.userId,
+              type: existing.type,
+              amount: delta,
+            },
+          ],
+          { session },
+        );
+        adjustment = created[0];
 
-      await recalculateTotalBalance(updated.userId, session);
+        await TransactionLedger.create(
+          [
+            {
+              userId: existing.userId,
+              type: delta >= 0 ? "CREDIT" : "DEBIT",
+              source: "BALANCE_ADJUSTMENT",
+              amount: Math.abs(delta),
+              referenceId: existing._id.toString(),
+            },
+          ],
+          { session },
+        );
+      }
+
+      await recalculateTotalBalance(existing.userId, session);
     });
 
-    return updated as typeof updated;
+    return adjustment as typeof adjustment;
   } finally {
     session.endSession();
   }
@@ -259,10 +273,11 @@ export async function createExpense(
     let expense: any;
 
     await session.withTransaction(async () => {
-      const balanceRecord = await BalanceRecord.findOne({ userId }).session(
-        session,
-      );
-      const available = balanceRecord?.amount ?? 0;
+      const balanceSummary = await BalanceAccount.aggregate([
+        { $match: { userId } },
+        { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
+      ]).session(session);
+      const available = balanceSummary[0]?.totalAmount ?? 0;
 
       if (amount > available) {
         throw new Error("Insufficient available balance for this expense.");
@@ -371,6 +386,185 @@ export async function getExpenses(
   };
 }
 
+export async function updateExpense(
+  userId: string,
+  expenseId: string,
+  amount: number,
+  category: string,
+  note: string,
+  date: Date,
+) {
+  if (amount <= 0) {
+    throw new Error("Expense amount must be greater than zero.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let updatedExpense: any;
+
+    await session.withTransaction(async () => {
+      const existingExpense = await Expense.findOne({
+        _id: expenseId,
+        userId,
+      }).session(session);
+      if (!existingExpense) {
+        throw new Error("Expense not found.");
+      }
+
+      const normalizedCategory = normalizeCategoryName(category);
+      const existingCategory = await Category.findOne({
+        userId,
+        name: normalizedCategory,
+      }).session(session);
+      if (!existingCategory) {
+        throw new Error("Category does not exist.");
+      }
+
+      const amountDelta = amount - existingExpense.amount;
+      if (amountDelta > 0) {
+        await allocateAmountAcrossBalances(userId, amountDelta, session);
+      } else if (amountDelta < 0) {
+        await creditBalanceEntry(userId, "CASH", -amountDelta, session);
+        await TransactionLedger.create(
+          [
+            {
+              userId,
+              type: "CREDIT",
+              source: "EXPENSE_REFUND",
+              amount: -amountDelta,
+              referenceId: existingExpense._id.toString(),
+            },
+          ],
+          { session },
+        );
+      }
+
+      const originalMonth = buildMonthYear(existingExpense.date);
+      const updatedMonth = buildMonthYear(date);
+
+      if (
+        originalMonth.month === updatedMonth.month &&
+        originalMonth.year === updatedMonth.year
+      ) {
+        const salaryMonth = await SalaryMonth.findOne({
+          userId,
+          month: updatedMonth.month,
+          year: updatedMonth.year,
+        }).session(session);
+        if (salaryMonth) {
+          salaryMonth.totalSpent += amountDelta;
+          salaryMonth.remainingSalary = Math.max(
+            salaryMonth.totalSalary - salaryMonth.totalSpent,
+            0,
+          );
+          await salaryMonth.save({ session });
+        }
+      } else {
+        const originalSalaryMonth = await SalaryMonth.findOne({
+          userId,
+          month: originalMonth.month,
+          year: originalMonth.year,
+        }).session(session);
+        if (originalSalaryMonth) {
+          originalSalaryMonth.totalSpent = Math.max(
+            originalSalaryMonth.totalSpent - existingExpense.amount,
+            0,
+          );
+          originalSalaryMonth.remainingSalary = Math.max(
+            originalSalaryMonth.totalSalary - originalSalaryMonth.totalSpent,
+            0,
+          );
+          await originalSalaryMonth.save({ session });
+        }
+
+        const newSalaryMonth = await SalaryMonth.findOne({
+          userId,
+          month: updatedMonth.month,
+          year: updatedMonth.year,
+        }).session(session);
+        if (newSalaryMonth) {
+          newSalaryMonth.totalSpent += amount;
+          newSalaryMonth.remainingSalary = Math.max(
+            newSalaryMonth.totalSalary - newSalaryMonth.totalSpent,
+            0,
+          );
+          await newSalaryMonth.save({ session });
+        }
+      }
+
+      existingExpense.amount = amount;
+      existingExpense.category = normalizedCategory;
+      existingExpense.description = note.trim();
+      existingExpense.date = date;
+      await existingExpense.save({ session });
+      updatedExpense = existingExpense;
+
+      await recalculateTotalBalance(userId, session);
+    });
+
+    return updatedExpense;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function deleteExpense(userId: string, expenseId: string) {
+  const session = await mongoose.startSession();
+
+  try {
+    let deletedExpense: any;
+
+    await session.withTransaction(async () => {
+      deletedExpense = await Expense.findOneAndDelete({
+        _id: expenseId,
+        userId,
+      }).session(session);
+      if (!deletedExpense) {
+        throw new Error("Expense not found.");
+      }
+
+      await creditBalanceEntry(userId, "CASH", deletedExpense.amount, session);
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "CREDIT",
+            source: "EXPENSE_REFUND",
+            amount: deletedExpense.amount,
+            referenceId: deletedExpense._id.toString(),
+          },
+        ],
+        { session },
+      );
+
+      const { month, year } = buildMonthYear(deletedExpense.date);
+      const salaryMonth = await SalaryMonth.findOne({
+        userId,
+        month,
+        year,
+      }).session(session);
+      if (salaryMonth) {
+        salaryMonth.totalSpent = Math.max(
+          salaryMonth.totalSpent - deletedExpense.amount,
+          0,
+        );
+        salaryMonth.remainingSalary = Math.max(
+          salaryMonth.totalSalary - salaryMonth.totalSpent,
+          0,
+        );
+        await salaryMonth.save({ session });
+      }
+
+      await recalculateTotalBalance(userId, session);
+    });
+
+    return deletedExpense;
+  } finally {
+    session.endSession();
+  }
+}
+
 export async function getMonthlyExpenseSummary(
   userId: string,
   year?: number,
@@ -409,7 +603,12 @@ export async function getMonthlyExpenseSummary(
     month: targetMonth,
     year: targetYear,
     totalSpent,
-    breakdown: summary,
+    breakdown: summary.map((item) => ({
+      category: item._id,
+      categoryLabel: formatCategoryLabel(item._id),
+      totalSpent: item.totalSpent,
+      count: item.count,
+    })),
   };
 }
 
@@ -545,10 +744,11 @@ export async function createLoan(
     let loan: any;
     await session.withTransaction(async () => {
       if (sourceType === "PERSONAL") {
-        const balanceRecord = await BalanceRecord.findOne({ userId }).session(
-          session,
-        );
-        const available = balanceRecord?.amount ?? 0;
+        const balanceSummary = await BalanceAccount.aggregate([
+          { $match: { userId } },
+          { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
+        ]).session(session);
+        const available = balanceSummary[0]?.totalAmount ?? 0;
         if (amount > available) {
           throw new Error("Insufficient balance to fund the personal loan.");
         }
@@ -755,12 +955,45 @@ export async function getDebts(userId: string) {
 }
 
 export async function getSummary(userId: string) {
-  const [balanceRecord, expenseStats, loanStats, totalDebt] = await Promise.all(
-    [
-      BalanceRecord.findOne({ userId }),
-      Expense.aggregate([
+  const now = new Date();
+  const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+  const [balanceStats, expenseStats, currentMonthStats, loanStats, totalDebt] =
+    await Promise.all([
+      BalanceAccount.aggregate([
         { $match: { userId } },
-        { $group: { _id: null, totalExpenses: { $sum: "$amount" } } },
+        { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
+      ]),
+      Expense.aggregate([
+        {
+          $match: { userId },
+        },
+        {
+          $group: {
+            _id: null,
+            totalExpenses: { $sum: "$amount" },
+            expenseCount: { $sum: 1 },
+            averageExpense: { $avg: "$amount" },
+          },
+        },
+      ]),
+      Expense.aggregate([
+        {
+          $match: {
+            userId,
+            date: {
+              $gte: startOfCurrentMonth,
+              $lt: startOfNextMonth,
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalSpent: { $sum: "$amount" },
+          },
+        },
       ]),
       Loan.aggregate([
         { $match: { userId } },
@@ -770,11 +1003,13 @@ export async function getSummary(userId: string) {
         { $match: { userId } },
         { $group: { _id: null, totalDebt: { $sum: "$remainingAmount" } } },
       ]),
-    ],
-  );
+    ]);
 
-  const totalBalance = balanceRecord?.amount ?? 0;
+  const totalBalance = balanceStats[0]?.totalAmount ?? 0;
   const totalExpenses = expenseStats[0]?.totalExpenses ?? 0;
+  const averageExpense =
+    Math.round((expenseStats[0]?.averageExpense ?? 0) * 100) / 100;
+  const currentMonthSpent = currentMonthStats[0]?.totalSpent ?? 0;
   const totalLoansGiven = loanStats[0]?.totalLoans ?? 0;
   const totalExternalDebt = totalDebt[0]?.totalDebt ?? 0;
 
@@ -784,5 +1019,8 @@ export async function getSummary(userId: string) {
     totalLoansGiven,
     totalDebt: totalExternalDebt,
     netPosition: totalBalance - totalExternalDebt,
+    averageExpense,
+    currentMonthSpent,
+    expenseCount: expenseStats[0]?.expenseCount ?? 0,
   };
 }
