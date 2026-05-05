@@ -22,6 +22,7 @@ import {
   getLoans,
   getDebts,
   getSummary,
+  getSummaryForMonth,
   getInsights as fetchInsights,
 } from "../services/financeService";
 import {
@@ -767,6 +768,35 @@ export const getFinanceSummary = async (req: AuthRequest, res: Response) => {
     return res
       .status(auth.status)
       .json({ success: false, message: auth.error });
+  }
+
+  const month = req.query.month ? Number(req.query.month) : undefined;
+  const year = req.query.year ? Number(req.query.year) : undefined;
+
+  if (month !== undefined || year !== undefined) {
+    if (
+      month === undefined ||
+      year === undefined ||
+      !Number.isInteger(month) ||
+      month < 1 ||
+      month > 12 ||
+      !Number.isInteger(year) ||
+      year < 1900
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Both month (1–12) and year must be provided together.",
+      });
+    }
+
+    try {
+      const summary = await getSummaryForMonth(auth.userId, month, year);
+      return res.status(200).json({ success: true, data: summary });
+    } catch (error: unknown) {
+      return res
+        .status(500)
+        .json({ success: false, message: getErrorMessage(error) });
+    }
   }
 
   try {
