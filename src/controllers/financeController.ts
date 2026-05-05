@@ -22,6 +22,7 @@ import {
   getLoans,
   getDebts,
   getSummary,
+  getInsights as fetchInsights,
 } from "../services/financeService";
 import {
   formatCategoryLabel,
@@ -771,6 +772,27 @@ export const getFinanceSummary = async (req: AuthRequest, res: Response) => {
   try {
     const summary = await getSummary(auth.userId);
     return res.status(200).json({ success: true, data: summary });
+  } catch (error: unknown) {
+    return res
+      .status(500)
+      .json({ success: false, message: getErrorMessage(error) });
+  }
+};
+
+export const getFinanceInsights = async (req: AuthRequest, res: Response) => {
+  const auth = getAuthorizedUserId(req);
+  if ("error" in auth) {
+    return res
+      .status(auth.status)
+      .json({ success: false, message: auth.error });
+  }
+
+  const year = req.query.year ? Number(req.query.year) : undefined;
+  const month = req.query.month ? Number(req.query.month) : undefined;
+
+  try {
+    const insights = await fetchInsights(auth.userId, year, month);
+    return res.status(200).json({ success: true, data: insights });
   } catch (error: unknown) {
     return res
       .status(500)

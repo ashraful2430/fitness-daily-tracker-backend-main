@@ -954,6 +954,53 @@ export async function getDebts(userId: string) {
   return debts;
 }
 
+export async function getInsights(
+  userId: string,
+  year?: number,
+  month?: number,
+) {
+  const now = new Date();
+  const targetYear = year ?? now.getFullYear();
+  const targetMonth = month ?? now.getMonth() + 1;
+
+  const start = new Date(targetYear, targetMonth - 1, 1);
+  const end = new Date(targetYear, targetMonth, 1);
+
+  const breakdown = await Expense.aggregate([
+    { $match: { userId, date: { $gte: start, $lt: end } } },
+    {
+      $group: {
+        _id: "$category",
+        totalSpent: { $sum: "$amount" },
+        count: { $sum: 1 },
+      },
+    },
+    { $sort: { totalSpent: -1 } },
+  ]);
+
+  const totalSpent = breakdown.reduce((sum, item) => sum + item.totalSpent, 0);
+
+  const topCategories = breakdown.map((item) => ({
+    category: item._id,
+    categoryLabel: formatCategoryLabel(item._id),
+    totalSpent: item.totalSpent,
+    count: item.count,
+    percentage:
+      totalSpent > 0
+        ? Math.round((item.totalSpent / totalSpent) * 10000) / 100
+        : 0,
+  }));
+
+  const mostSpentCategory = topCategories[0] ?? null;
+
+  return {
+    period: { month: targetMonth, year: targetYear },
+    totalSpent,
+    mostSpentCategory,
+    topCategories,
+  };
+}
+
 export async function getSummary(userId: string) {
   const now = new Date();
   const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);

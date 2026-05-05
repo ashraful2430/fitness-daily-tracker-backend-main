@@ -20,6 +20,7 @@ import {
   getLoanList,
   getDebtList,
   getFinanceSummary,
+  getFinanceInsights,
 } from "../controllers/financeController";
 import { authMiddleware } from "../middleware/authMiddleware";
 
@@ -52,5 +53,6 @@ router.get("/loans", getLoanList);
 router.get("/debts", getDebtList);
 
 router.get("/summary", getFinanceSummary);
+router.get("/insights", getFinanceInsights);
 
 export default router;
