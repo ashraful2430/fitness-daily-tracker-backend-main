@@ -1001,6 +1001,76 @@ export async function getInsights(
   };
 }
 
+export async function getSummaryForMonth(
+  userId: string,
+  month: number,
+  year: number,
+) {
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 1);
+
+  const [balanceStats, expenseStats, topCategoriesAgg, salaryRecord] =
+    await Promise.all([
+      BalanceAccount.aggregate([
+        { $match: { userId } },
+        { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
+      ]),
+      Expense.aggregate([
+        { $match: { userId, date: { $gte: start, $lt: end } } },
+        {
+          $group: {
+            _id: null,
+            totalExpenses: { $sum: "$amount" },
+            expenseCount: { $sum: 1 },
+            averageExpense: { $avg: "$amount" },
+          },
+        },
+      ]),
+      Expense.aggregate([
+        { $match: { userId, date: { $gte: start, $lt: end } } },
+        {
+          $group: {
+            _id: "$category",
+            totalSpent: { $sum: "$amount" },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { totalSpent: -1 } },
+      ]),
+      SalaryMonth.findOne({
+        userId,
+        $or: [{ year: { $lt: year } }, { year, month: { $lte: month } }],
+      }).sort({ year: -1, month: -1 }),
+    ]);
+
+  const availableBalance = balanceStats[0]?.totalAmount ?? 0;
+  const totalExpenses = expenseStats[0]?.totalExpenses ?? 0;
+  const expenseCount = expenseStats[0]?.expenseCount ?? 0;
+  const averageExpense =
+    Math.round((expenseStats[0]?.averageExpense ?? 0) * 100) / 100;
+  const salaryAmount = salaryRecord?.totalSalary ?? 0;
+  const currentMonthSpent = totalExpenses;
+  const remainingSalary = Math.max(salaryAmount - currentMonthSpent, 0);
+
+  const topCategories = topCategoriesAgg.map((item: any) => ({
+    category: item._id,
+    categoryLabel: formatCategoryLabel(item._id),
+    totalSpent: item.totalSpent,
+    count: item.count,
+  }));
+
+  return {
+    salaryAmount,
+    availableBalance,
+    totalExpenses,
+    expenseCount,
+    averageExpense,
+    currentMonthSpent,
+    remainingSalary,
+    topCategories,
+  };
+}
+
 export async function getSummary(userId: string) {
   const now = new Date();
   const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
