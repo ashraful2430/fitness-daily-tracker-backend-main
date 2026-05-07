@@ -152,13 +152,28 @@ export const payLoan = async (req: AuthRequest, res: Response) => {
   if (!userId) return sendError(res, 401, "Unauthorized");
 
   const loanId = resolveId(req.params.id);
+  const { amount } = req.body as { amount?: number };
+
+  if (typeof amount !== "number" || amount <= 0)
+    return sendError(res, 400, "amount must be greater than 0", "amount");
 
   try {
     const loan = await LoanDebt.findOne({ _id: loanId, userId });
     if (!loan) return sendError(res, 404, "Loan not found");
     if (loan.status === "PAID") return sendError(res, 400, "Loan is already paid");
 
-    loan.status = "PAID";
+    const remaining = loan.amount - loan.paidAmount;
+    if (amount > remaining)
+      return sendError(res, 400, `Amount exceeds remaining balance of ${remaining}`, "amount");
+
+    loan.paidAmount += amount;
+    if (loan.paidAmount >= loan.amount) {
+      loan.paidAmount = loan.amount;
+      loan.status = "PAID";
+    } else {
+      loan.status = "PARTIALLY_PAID";
+    }
+
     await loan.save();
     return res.status(200).json({ success: true, data: loan });
   } catch (e) {
@@ -316,31 +331,47 @@ export const repayLending = async (req: AuthRequest, res: Response) => {
 
   const lendingId = resolveId(req.params.id);
 
+  const { amount } = req.body as { amount?: number };
+
+  if (typeof amount !== "number" || amount <= 0)
+    return sendError(res, 400, "amount must be greater than 0", "amount");
+
   const session = await mongoose.startSession();
   try {
     let lending: any;
 
     await session.withTransaction(async () => {
-      lending = await Lending.findOne({ _id: lendingId, userId }).session(
-        session,
-      );
+      lending = await Lending.findOne({ _id: lendingId, userId }).session(session);
       if (!lending) throw new ApiError(404, "Lending record not found");
       if (lending.status === "REPAID")
         throw new ApiError(400, "Lending is already repaid");
 
-      lending.status = "REPAID";
+      const remaining = lending.amount - lending.repaidAmount;
+      if (amount > remaining)
+        throw new ApiError(400, `Amount exceeds remaining balance of ${remaining}`, "amount");
+
+      lending.repaidAmount += amount;
+      const fullyRepaid = lending.repaidAmount >= lending.amount;
+      if (fullyRepaid) {
+        lending.repaidAmount = lending.amount;
+        lending.status = "REPAID";
+      } else {
+        lending.status = "PARTIALLY_REPAID";
+      }
       await lending.save({ session });
 
-      if (lending.fundingSource === "PERSONAL") {
-        // Return money to available balance
-        await creditCashBalance(userId, lending.amount, session);
-      } else if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
-        // The borrower repaid us → we can settle our own debt
-        await LoanDebt.findOneAndUpdate(
-          { _id: lending.linkedLoanId, userId },
-          { status: "PAID" },
-          { session },
-        );
+      if (fullyRepaid) {
+        if (lending.fundingSource === "PERSONAL") {
+          await creditCashBalance(userId, lending.amount, session);
+        } else if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
+          await LoanDebt.findOneAndUpdate(
+            { _id: lending.linkedLoanId, userId },
+            { status: "PAID", paidAmount: lending.amount },
+            { session },
+          );
+        }
+      } else if (lending.fundingSource === "PERSONAL") {
+        await creditCashBalance(userId, amount, session);
       }
     });
 
@@ -366,15 +397,13 @@ export const deleteLending = async (req: AuthRequest, res: Response) => {
       );
       if (!lending) throw new ApiError(404, "Lending record not found");
 
-      if (lending.status === "ACTIVE") {
+      const isOpen = lending.status === "ACTIVE" || lending.status === "PARTIALLY_REPAID";
+      if (isOpen) {
         if (lending.fundingSource === "PERSONAL") {
-          // Refund the deducted balance
-          await creditCashBalance(userId, lending.amount, session);
-        } else if (
-          lending.fundingSource === "BORROWED" &&
-          lending.linkedLoanId
-        ) {
-          // Remove the auto-created loan since we're cancelling the lending
+          // Refund only the portion not yet returned
+          const unreturned = lending.amount - lending.repaidAmount;
+          if (unreturned > 0) await creditCashBalance(userId, unreturned, session);
+        } else if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
           await LoanDebt.findOneAndDelete({
             _id: lending.linkedLoanId,
             userId,
@@ -408,12 +437,22 @@ export const getFinanceSummary = async (req: AuthRequest, res: Response) => {
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
       LoanDebt.aggregate([
-        { $match: { userId, status: "ACTIVE" } },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
+        { $match: { userId, status: { $in: ["ACTIVE", "PARTIALLY_PAID"] } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $subtract: ["$amount", "$paidAmount"] } },
+          },
+        },
       ]),
       Lending.aggregate([
-        { $match: { userId, status: "ACTIVE" } },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
+        { $match: { userId, status: { $in: ["ACTIVE", "PARTIALLY_REPAID"] } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $subtract: ["$amount", "$repaidAmount"] } },
+          },
+        },
       ]),
     ]);
 
