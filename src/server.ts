@@ -9,6 +9,9 @@ import dashboardRoutes from "./routes/dashboardRoutes";
 import scoreSectionRoutes from "./routes/scoreSectionRoutes";
 import moneyRoutes from "./routes/moneyRoutes";
 import learningRoutes from "./routes/learningRoutes";
+import loanRoutes from "./routes/loanRoutes";
+import lendingRoutes from "./routes/lendingRoutes";
+import financeRoutes from "./routes/financeRoutes";
 
 dotenv.config();
 
@@ -47,6 +50,9 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/score-sections", scoreSectionRoutes);
 app.use("/api/money", moneyRoutes);
 app.use("/api/learning", learningRoutes);
+app.use("/api/loans", loanRoutes);
+app.use("/api/lending", lendingRoutes);
+app.use("/api/finance", financeRoutes);
 
 app.get("/health", (req, res) => {
   res.json({
