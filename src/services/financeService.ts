@@ -15,6 +15,8 @@ import SalaryMonth from "../models/SalaryMonth";
 import Loan, { LoanSourceType, LoanStatusType } from "../models/Loan";
 import LoanLedger from "../models/LoanLedger";
 import ExternalDebt from "../models/ExternalDebt";
+import Income from "../models/Income";
+import Savings from "../models/Savings";
 
 const BALANCE_SOURCE_PRIORITY: BalanceAccountType[] = [
   "SALARY",
@@ -1140,4 +1142,102 @@ export async function getSummary(userId: string) {
     currentMonthSpent,
     expenseCount: expenseStats[0]?.expenseCount ?? 0,
   };
+}
+
+export async function createIncomeRecord(
+  userId: string,
+  amount: number,
+  source: string,
+  note: string,
+  date: Date,
+) {
+  if (amount <= 0) {
+    throw new Error("Amount must be greater than zero.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let income: any;
+    await session.withTransaction(async () => {
+      const docs = await Income.create(
+        [{ userId, amount, source, note, date }],
+        { session },
+      );
+      income = docs[0];
+
+      await BalanceAccount.create(
+        [{ userId, type: "EXTERNAL", amount }],
+        { session },
+      );
+
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "CREDIT",
+            source: "INCOME_ADDED",
+            amount,
+            referenceId: income._id.toString(),
+          },
+        ],
+        { session },
+      );
+
+      await recalculateTotalBalance(userId, session);
+    });
+
+    return income;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function createSavingsRecord(
+  userId: string,
+  amount: number,
+  sourceName: string,
+  note: string,
+  date: Date,
+) {
+  if (amount <= 0) {
+    throw new Error("Amount must be greater than zero.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let savings: any;
+    await session.withTransaction(async () => {
+      const docs = await Savings.create(
+        [{ userId, amount, sourceName, note, date }],
+        { session },
+      );
+      savings = docs[0];
+
+      await BalanceAccount.create(
+        [{ userId, type: "EXTERNAL", amount }],
+        { session },
+      );
+
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "CREDIT",
+            source: "SAVINGS_ADDED",
+            amount,
+            referenceId: savings._id.toString(),
+          },
+        ],
+        { session },
+      );
+
+      await recalculateTotalBalance(userId, session);
+    });
+
+    return savings;
+  } finally {
+    session.endSession();
+  }
 }

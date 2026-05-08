@@ -4,6 +4,8 @@ import { AuthRequest } from "../middleware/authMiddleware";
 import LoanDebt from "../models/LoanDebt";
 import Lending from "../models/Lending";
 import BalanceAccount from "../models/BalanceAccount";
+import BalanceRecord from "../models/BalanceRecord";
+import TransactionLedger from "../models/TransactionLedger";
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
 
@@ -121,17 +123,59 @@ export const createLoan = async (req: AuthRequest, res: Response) => {
   if (isNaN(loanDate.getTime()))
     return sendError(res, 400, "Invalid date", "date");
 
+  const session = await mongoose.startSession();
   try {
-    const loan = await LoanDebt.create({
-      userId,
-      personName: personName.trim(),
-      amount,
-      reason: reason.trim(),
-      date: loanDate,
+    let loan: any;
+    await session.withTransaction(async () => {
+      const docs = await LoanDebt.create(
+        [
+          {
+            userId,
+            personName: personName!.trim(),
+            amount,
+            reason: reason!.trim(),
+            date: loanDate,
+          },
+        ],
+        { session },
+      );
+      loan = docs[0];
+
+      await BalanceAccount.create(
+        [{ userId, type: "EXTERNAL", amount }],
+        { session },
+      );
+
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "CREDIT",
+            source: "LOAN_RECEIVED",
+            amount,
+            referenceId: loan._id.toString(),
+          },
+        ],
+        { session },
+      );
+
+      const agg = await BalanceAccount.aggregate([
+        { $match: { userId } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]).session(session);
+      const total = agg[0]?.total ?? 0;
+      await BalanceRecord.findOneAndUpdate(
+        { userId },
+        { userId, amount: total },
+        { new: true, upsert: true, setDefaultsOnInsert: true, session },
+      );
     });
+
     return res.status(201).json({ success: true, data: loan });
   } catch (e) {
     return handleError(res, e);
+  } finally {
+    session.endSession();
   }
 };
 

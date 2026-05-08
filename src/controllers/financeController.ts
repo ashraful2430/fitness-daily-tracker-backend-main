@@ -24,6 +24,8 @@ import {
   getSummary,
   getSummaryForMonth,
   getInsights as fetchInsights,
+  createIncomeRecord,
+  createSavingsRecord,
 } from "../services/financeService";
 import {
   formatCategoryLabel,
@@ -826,6 +828,122 @@ export const getFinanceInsights = async (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     return res
       .status(500)
+      .json({ success: false, message: getErrorMessage(error) });
+  }
+};
+
+export const addIncome = async (req: AuthRequest, res: Response) => {
+  const auth = getAuthorizedUserId(req);
+  if ("error" in auth) {
+    return res
+      .status(auth.status)
+      .json({ success: false, message: auth.error });
+  }
+
+  const { amount, source, note, date } = req.body as {
+    amount?: number;
+    source?: string;
+    note?: string;
+    date?: string;
+  };
+
+  if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
+    return res
+      .status(400)
+      .json({ success: false, message: "A valid amount is required." });
+  }
+  if (!source?.trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Income source is required." });
+  }
+  if (!note?.trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Income note is required." });
+  }
+
+  const incomeDate = date ? new Date(date) : new Date();
+  if (Number.isNaN(incomeDate.getTime())) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Income date is invalid." });
+  }
+
+  try {
+    const income = await createIncomeRecord(
+      auth.userId,
+      amount,
+      source.trim(),
+      note.trim(),
+      incomeDate,
+    );
+    return res.status(201).json({
+      success: true,
+      message: "Income recorded successfully.",
+      data: income,
+    });
+  } catch (error: unknown) {
+    return res
+      .status(400)
+      .json({ success: false, message: getErrorMessage(error) });
+  }
+};
+
+export const addSavings = async (req: AuthRequest, res: Response) => {
+  const auth = getAuthorizedUserId(req);
+  if ("error" in auth) {
+    return res
+      .status(auth.status)
+      .json({ success: false, message: auth.error });
+  }
+
+  const { amount, sourceName, note, date } = req.body as {
+    amount?: number;
+    sourceName?: string;
+    note?: string;
+    date?: string;
+  };
+
+  if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
+    return res
+      .status(400)
+      .json({ success: false, message: "A valid amount is required." });
+  }
+  if (!sourceName?.trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Savings source name is required." });
+  }
+  if (!note?.trim()) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Savings note is required." });
+  }
+
+  const savingsDate = date ? new Date(date) : new Date();
+  if (Number.isNaN(savingsDate.getTime())) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Savings date is invalid." });
+  }
+
+  try {
+    const savings = await createSavingsRecord(
+      auth.userId,
+      amount,
+      sourceName.trim(),
+      note.trim(),
+      savingsDate,
+    );
+    return res.status(201).json({
+      success: true,
+      message: "Savings recorded successfully.",
+      data: savings,
+    });
+  } catch (error: unknown) {
+    return res
+      .status(400)
       .json({ success: false, message: getErrorMessage(error) });
   }
 };
