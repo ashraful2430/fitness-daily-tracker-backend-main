@@ -124,7 +124,8 @@ async function listLearningSessions(userId, filters) {
         LearningSession_1.default.find(query)
             .sort({ date: -1, createdAt: -1 })
             .skip(skip)
-            .limit(filters.limit),
+            .limit(filters.limit)
+            .lean(),
         LearningSession_1.default.countDocuments(query),
     ]);
     return {
@@ -174,7 +175,9 @@ async function getLearningSummary(userId) {
         ]),
         LearningSession_1.default.countDocuments({ userId }),
         LearningSession_1.default.countDocuments({ userId, status: "completed" }),
-        LearningSession_1.default.findOne({ userId, status: "active" }).sort({ updatedAt: -1 }),
+        LearningSession_1.default.findOne({ userId, status: "active" })
+            .sort({ updatedAt: -1 })
+            .lean(),
         LearningSession_1.default.aggregate([
             { $match: { userId } },
             {
@@ -189,7 +192,8 @@ async function getLearningSummary(userId) {
         ]),
         LearningSession_1.default.find({ userId })
             .sort({ updatedAt: -1, date: -1 })
-            .limit(5),
+            .limit(5)
+            .lean(),
         LearningSession_1.default.find({ userId })
             .select("date status actualMinutes")
             .lean(),

@@ -6,6 +6,7 @@ import Lending from "../models/Lending";
 import BalanceAccount from "../models/BalanceAccount";
 import BalanceRecord from "../models/BalanceRecord";
 import TransactionLedger from "../models/TransactionLedger";
+import { errorMessage, successMessage } from "../utils/apiMessages";
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ function handleError(res: Response, e: unknown) {
   if (e instanceof ApiError) {
     return sendError(res, e.statusCode, e.message, e.field);
   }
-  return sendError(res, 500, "Internal server error");
+  return sendError(res, 500, errorMessage("server"));
 }
 
 function resolveId(param: string | string[]) {
@@ -112,7 +113,7 @@ async function creditCashBalance(
 
 export const createLoan = async (req: AuthRequest, res: Response) => {
   const userId = req.userId;
-  if (!userId) return sendError(res, 401, "Unauthorized");
+  if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
   const { personName, amount, reason, date } = req.body as {
     personName?: string;
@@ -122,13 +123,13 @@ export const createLoan = async (req: AuthRequest, res: Response) => {
   };
 
   if (!personName?.trim())
-    return sendError(res, 400, "personName is required", "personName");
+    return sendError(res, 400, "personName is required. Who handed you the cash?", "personName");
   if (typeof amount !== "number" || amount <= 0)
-    return sendError(res, 400, "amount must be greater than 0", "amount");
+    return sendError(res, 400, errorMessage("invalidAmount"), "amount");
 
   const loanDate = date ? new Date(date) : new Date();
   if (isNaN(loanDate.getTime()))
-    return sendError(res, 400, "Invalid date", "date");
+    return sendError(res, 400, errorMessage("invalidDate"), "date");
 
   const session = await mongoose.startSession();
   try {
@@ -178,7 +179,11 @@ export const createLoan = async (req: AuthRequest, res: Response) => {
       );
     });
 
-    return res.status(201).json({ success: true, data: loan });
+    return res.status(201).json({
+      success: true,
+      message: successMessage("created", "loan-debt-created"),
+      data: loan,
+    });
   } catch (e) {
     return handleError(res, e);
   } finally {
@@ -188,10 +193,10 @@ export const createLoan = async (req: AuthRequest, res: Response) => {
 
 export const getLoans = async (req: AuthRequest, res: Response) => {
   const userId = req.userId;
-  if (!userId) return sendError(res, 401, "Unauthorized");
+  if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
   try {
-    const loans = await LoanDebt.find({ userId }).sort({ createdAt: -1 });
+    const loans = await LoanDebt.find({ userId }).sort({ createdAt: -1 }).lean();
     return res.status(200).json({ success: true, data: loans });
   } catch (e) {
     return handleError(res, e);
@@ -200,18 +205,18 @@ export const getLoans = async (req: AuthRequest, res: Response) => {
 
 export const payLoan = async (req: AuthRequest, res: Response) => {
   const userId = req.userId;
-  if (!userId) return sendError(res, 401, "Unauthorized");
+  if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
   const loanId = resolveId(req.params.id);
   const { amount } = req.body as { amount?: number };
 
   if (typeof amount !== "number" || amount <= 0)
-    return sendError(res, 400, "amount must be greater than 0", "amount");
+    return sendError(res, 400, errorMessage("invalidAmount"), "amount");
 
   try {
     const loan = await LoanDebt.findOne({ _id: loanId, userId });
-    if (!loan) return sendError(res, 404, "Loan not found");
-    if (loan.status === "PAID") return sendError(res, 400, "Loan is already paid");
+    if (!loan) return sendError(res, 404, errorMessage("notFound"));
+    if (loan.status === "PAID") return sendError(res, 400, "Loan is already paid. Stop trying to pay a ghost bill.");
 
     const remaining = loan.amount - loan.paidAmount;
     if (amount > remaining)
@@ -226,7 +231,11 @@ export const payLoan = async (req: AuthRequest, res: Response) => {
     }
 
     await loan.save();
-    return res.status(200).json({ success: true, data: loan });
+    return res.status(200).json({
+      success: true,
+      message: successMessage("updated", "loan-debt-paid"),
+      data: loan,
+    });
   } catch (e) {
     return handleError(res, e);
   }
@@ -234,13 +243,13 @@ export const payLoan = async (req: AuthRequest, res: Response) => {
 
 export const deleteLoan = async (req: AuthRequest, res: Response) => {
   const userId = req.userId;
-  if (!userId) return sendError(res, 401, "Unauthorized");
+  if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
   const loanId = resolveId(req.params.id);
 
   try {
     const loan = await LoanDebt.findOne({ _id: loanId, userId });
-    if (!loan) return sendError(res, 404, "Loan not found");
+    if (!loan) return sendError(res, 404, errorMessage("notFound"));
 
     if (loan.linkedLendingId) {
       return sendError(
@@ -251,7 +260,10 @@ export const deleteLoan = async (req: AuthRequest, res: Response) => {
     }
 
     await LoanDebt.deleteOne({ _id: loanId });
-    return res.status(200).json({ success: true, message: "Loan deleted successfully" });
+    return res.status(200).json({
+      success: true,
+      message: successMessage("deleted", "loan-debt-deleted"),
+    });
   } catch (e) {
     return handleError(res, e);
   }
@@ -261,7 +273,7 @@ export const deleteLoan = async (req: AuthRequest, res: Response) => {
 
 export const createLending = async (req: AuthRequest, res: Response) => {
   const userId = req.userId;
-  if (!userId) return sendError(res, 401, "Unauthorized");
+  if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
   const { personName, amount, fundingSource, date } = req.body as {
     personName?: string;
@@ -271,9 +283,9 @@ export const createLending = async (req: AuthRequest, res: Response) => {
   };
 
   if (!personName?.trim())
-    return sendError(res, 400, "personName is required", "personName");
+    return sendError(res, 400, "personName is required. Lending to 'someone' is how chaos gets receipts.", "personName");
   if (typeof amount !== "number" || amount <= 0)
-    return sendError(res, 400, "amount must be greater than 0", "amount");
+    return sendError(res, 400, errorMessage("invalidAmount"), "amount");
   if (!fundingSource || !["PERSONAL", "BORROWED"].includes(fundingSource))
     return sendError(
       res,
@@ -284,7 +296,7 @@ export const createLending = async (req: AuthRequest, res: Response) => {
 
   const lendingDate = date ? new Date(date) : new Date();
   if (isNaN(lendingDate.getTime()))
-    return sendError(res, 400, "Invalid date", "date");
+    return sendError(res, 400, errorMessage("invalidDate"), "date");
 
   const session = await mongoose.startSession();
   try {
@@ -296,7 +308,7 @@ export const createLending = async (req: AuthRequest, res: Response) => {
         if (amount > available) {
           throw new ApiError(
             400,
-            `Insufficient balance. Available: ${available}`,
+            `Insufficient balance. Available: ${available}. Wallet said sit down.`,
             "amount",
           );
         }
@@ -356,7 +368,11 @@ export const createLending = async (req: AuthRequest, res: Response) => {
       }
     });
 
-    return res.status(201).json({ success: true, data: lending });
+    return res.status(201).json({
+      success: true,
+      message: successMessage("created", "lending-created"),
+      data: lending,
+    });
   } catch (e) {
     return handleError(res, e);
   } finally {
@@ -366,10 +382,10 @@ export const createLending = async (req: AuthRequest, res: Response) => {
 
 export const getLendings = async (req: AuthRequest, res: Response) => {
   const userId = req.userId;
-  if (!userId) return sendError(res, 401, "Unauthorized");
+  if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
   try {
-    const lendings = await Lending.find({ userId }).sort({ createdAt: -1 });
+    const lendings = await Lending.find({ userId }).sort({ createdAt: -1 }).lean();
     return res.status(200).json({ success: true, data: lendings });
   } catch (e) {
     return handleError(res, e);
@@ -378,14 +394,14 @@ export const getLendings = async (req: AuthRequest, res: Response) => {
 
 export const repayLending = async (req: AuthRequest, res: Response) => {
   const userId = req.userId;
-  if (!userId) return sendError(res, 401, "Unauthorized");
+  if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
   const lendingId = resolveId(req.params.id);
 
   const { amount } = req.body as { amount?: number };
 
   if (typeof amount !== "number" || amount <= 0)
-    return sendError(res, 400, "amount must be greater than 0", "amount");
+    return sendError(res, 400, errorMessage("invalidAmount"), "amount");
 
   const session = await mongoose.startSession();
   try {
@@ -393,9 +409,9 @@ export const repayLending = async (req: AuthRequest, res: Response) => {
 
     await session.withTransaction(async () => {
       lending = await Lending.findOne({ _id: lendingId, userId }).session(session);
-      if (!lending) throw new ApiError(404, "Lending record not found");
+      if (!lending) throw new ApiError(404, errorMessage("notFound"));
       if (lending.status === "REPAID")
-        throw new ApiError(400, "Lending is already repaid");
+        throw new ApiError(400, "Lending is already repaid. Victory lap denied.");
 
       const remaining = lending.amount - lending.repaidAmount;
       if (amount > remaining)
@@ -426,7 +442,11 @@ export const repayLending = async (req: AuthRequest, res: Response) => {
       }
     });
 
-    return res.status(200).json({ success: true, data: lending });
+    return res.status(200).json({
+      success: true,
+      message: successMessage("updated", "lending-repaid"),
+      data: lending,
+    });
   } catch (e) {
     return handleError(res, e);
   } finally {
@@ -436,7 +456,7 @@ export const repayLending = async (req: AuthRequest, res: Response) => {
 
 export const deleteLending = async (req: AuthRequest, res: Response) => {
   const userId = req.userId;
-  if (!userId) return sendError(res, 401, "Unauthorized");
+  if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
   const lendingId = resolveId(req.params.id);
 
@@ -446,7 +466,7 @@ export const deleteLending = async (req: AuthRequest, res: Response) => {
       const lending = await Lending.findOne({ _id: lendingId, userId }).session(
         session,
       );
-      if (!lending) throw new ApiError(404, "Lending record not found");
+      if (!lending) throw new ApiError(404, errorMessage("notFound"));
 
       const isOpen = lending.status === "ACTIVE" || lending.status === "PARTIALLY_REPAID";
       if (isOpen) {
@@ -467,7 +487,10 @@ export const deleteLending = async (req: AuthRequest, res: Response) => {
 
     return res
       .status(200)
-      .json({ success: true, message: "Lending deleted successfully" });
+      .json({
+        success: true,
+        message: successMessage("deleted", "lending-deleted"),
+      });
   } catch (e) {
     return handleError(res, e);
   } finally {
@@ -479,7 +502,7 @@ export const deleteLending = async (req: AuthRequest, res: Response) => {
 
 export const getFinanceSummary = async (req: AuthRequest, res: Response) => {
   const userId = req.userId;
-  if (!userId) return sendError(res, 401, "Unauthorized");
+  if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
   try {
     const [balanceResult, loanResult, lendingResult] = await Promise.all([

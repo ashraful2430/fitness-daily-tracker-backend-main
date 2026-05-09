@@ -53,5 +53,6 @@ const salaryMonthSchema = new Schema<ISalaryMonth>(
 );
 
 salaryMonthSchema.index({ userId: 1, year: 1, month: 1 }, { unique: true });
+salaryMonthSchema.index({ userId: 1, year: -1, month: -1 });
 
 export default model<ISalaryMonth>("SalaryMonth", salaryMonthSchema);

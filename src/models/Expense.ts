@@ -55,5 +55,6 @@ expenseSchema
 
 expenseSchema.index({ userId: 1, date: -1 });
 expenseSchema.index({ userId: 1, category: 1 });
+expenseSchema.index({ userId: 1, category: 1, date: -1, createdAt: -1 });
 
 export default model<IExpense>("Expense", expenseSchema);

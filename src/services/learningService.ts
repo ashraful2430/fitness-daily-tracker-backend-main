@@ -184,7 +184,8 @@ export async function listLearningSessions(
     LearningSession.find(query)
       .sort({ date: -1, createdAt: -1 })
       .skip(skip)
-      .limit(filters.limit),
+      .limit(filters.limit)
+      .lean(),
     LearningSession.countDocuments(query),
   ]);
 
@@ -246,7 +247,9 @@ export async function getLearningSummary(userId: string) {
       ]),
       LearningSession.countDocuments({ userId }),
       LearningSession.countDocuments({ userId, status: "completed" }),
-      LearningSession.findOne({ userId, status: "active" }).sort({ updatedAt: -1 }),
+      LearningSession.findOne({ userId, status: "active" })
+        .sort({ updatedAt: -1 })
+        .lean(),
       LearningSession.aggregate([
         { $match: { userId } },
         {
@@ -261,7 +264,8 @@ export async function getLearningSummary(userId: string) {
       ]),
       LearningSession.find({ userId })
         .sort({ updatedAt: -1, date: -1 })
-        .limit(5),
+        .limit(5)
+        .lean(),
       LearningSession.find({ userId })
         .select("date status actualMinutes")
         .lean(),

@@ -100,7 +100,7 @@ function normalizeOptionalText(value) {
 }
 async function getBalanceSources(userId) {
     const [sources, balanceSummary] = await Promise.all([
-        BalanceAccount_1.default.find({ userId }).sort({ type: 1, createdAt: -1 }),
+        BalanceAccount_1.default.find({ userId }).sort({ type: 1, createdAt: -1 }).lean(),
         BalanceAccount_1.default.aggregate([
             { $match: { userId } },
             { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
@@ -538,7 +538,8 @@ async function getSalaryHistory(userId, page, limit) {
         SalaryMonth_1.default.find({ userId })
             .sort({ year: -1, month: -1 })
             .skip(skip)
-            .limit(limitNumber),
+            .limit(limitNumber)
+            .lean(),
         SalaryMonth_1.default.countDocuments({ userId }),
     ]);
     return {
@@ -701,7 +702,7 @@ async function getLoans(userId, filters) {
     const limit = filters.limit && filters.limit > 0 ? Math.min(filters.limit, 100) : 20;
     const skip = (page - 1) * limit;
     const [loans, total] = await Promise.all([
-        Loan_1.default.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
+        Loan_1.default.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
         Loan_1.default.countDocuments(query),
     ]);
     return {
@@ -715,7 +716,7 @@ async function getLoans(userId, filters) {
     };
 }
 async function getDebts(userId) {
-    const debts = await ExternalDebt_1.default.find({ userId }).sort({ updatedAt: -1 });
+    const debts = await ExternalDebt_1.default.find({ userId }).sort({ updatedAt: -1 }).lean();
     return debts;
 }
 async function getInsights(userId, year, month) {
@@ -786,7 +787,9 @@ async function getSummaryForMonth(userId, month, year) {
         SalaryMonth_1.default.findOne({
             userId,
             $or: [{ year: { $lt: year } }, { year, month: { $lte: month } }],
-        }).sort({ year: -1, month: -1 }),
+        })
+            .sort({ year: -1, month: -1 })
+            .lean(),
     ]);
     const availableBalance = balanceStats[0]?.totalAmount ?? 0;
     const totalExpenses = expenseStats[0]?.totalExpenses ?? 0;

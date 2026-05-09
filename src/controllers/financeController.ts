@@ -31,10 +31,15 @@ import {
   formatCategoryLabel,
   normalizeCategoryName,
 } from "../utils/financeUtils";
+import {
+  errorMessage,
+  friendlyError,
+  successMessage,
+} from "../utils/apiMessages";
 import { AuthRequest } from "../middleware/authMiddleware";
 
 function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Server error";
+  return friendlyError(error instanceof Error ? error.message : "Server error");
 }
 
 function getAuthorizedUserId(
@@ -50,7 +55,7 @@ function getAuthorizedUserId(
 
   if (requestedUserId && requestedUserId !== req.userId) {
     return {
-      error: "You are not allowed to access another user's money data.",
+      error: errorMessage("forbidden"),
       status: 403,
     };
   }
@@ -82,14 +87,14 @@ export const addBalance = async (req: AuthRequest, res: Response) => {
   ) {
     return res.status(400).json({
       success: false,
-      message: `Balance source type must be one of: ${BALANCE_ACCOUNT_TYPES.join(", ")}.`,
+      message: `Balance source must be one of ${BALANCE_ACCOUNT_TYPES.join(", ")}. Pick a lane, champ.`,
     });
   }
 
   if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
     return res.status(400).json({
       success: false,
-      message: "Amount must be a positive number.",
+      message: errorMessage("invalidAmount"),
     });
   }
 
@@ -97,7 +102,7 @@ export const addBalance = async (req: AuthRequest, res: Response) => {
     const account = await addBalanceSource(auth.userId, type as any, amount);
     return res.status(201).json({
       success: true,
-      message: "Balance source added successfully.",
+      message: successMessage("created", "balance-added"),
       data: account,
     });
   } catch (error: unknown) {
@@ -128,7 +133,7 @@ export const updateBalance = async (req: AuthRequest, res: Response) => {
   if (typeof amount !== "number" || Number.isNaN(amount) || amount < 0) {
     return res.status(400).json({
       success: false,
-      message: "Amount must be a non-negative number.",
+      message: "Amount must be zero or more. Negative money is how spreadsheets start plotting.",
     });
   }
 
@@ -136,7 +141,7 @@ export const updateBalance = async (req: AuthRequest, res: Response) => {
     const updated = await updateBalanceSource(id, amount);
     return res.status(200).json({
       success: true,
-      message: "Balance source updated successfully.",
+      message: successMessage("updated", "balance-updated"),
       data: updated,
     });
   } catch (error: unknown) {
@@ -166,7 +171,7 @@ export const deleteBalance = async (req: AuthRequest, res: Response) => {
     const deleted = await deleteBalanceSource(id);
     return res.status(200).json({
       success: true,
-      message: "Balance source deleted successfully.",
+      message: successMessage("deleted", "balance-deleted"),
       data: deleted,
     });
   } catch (error: unknown) {
@@ -211,7 +216,7 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
   if (!name) {
     return res
       .status(400)
-      .json({ success: false, message: "Category name is required." });
+      .json({ success: false, message: errorMessage("categoryMissing") });
   }
 
   try {
@@ -224,7 +229,7 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
 
     return res.status(200).json({
       success: true,
-      message: "Category saved successfully.",
+      message: successMessage("created", "category-saved"),
       data: {
         ...(category?.toObject ? category.toObject() : category),
         label: formatCategoryLabel(normalized),
@@ -247,13 +252,13 @@ export const getCategories = async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const categories = await Category.find({ userId: auth.userId }).sort({
-      name: 1,
-    });
+    const categories = await Category.find({ userId: auth.userId })
+      .sort({ name: 1 })
+      .lean();
     return res.status(200).json({
       success: true,
       data: categories.map((category) => ({
-        ...category.toObject(),
+        ...category,
         label: formatCategoryLabel(category.name),
       })),
     });
@@ -289,9 +294,9 @@ export const deleteCategory = async (req: AuthRequest, res: Response) => {
     });
     if (expenseCount > 0) {
       return res.status(409).json({
-        success: false,
-        message:
-          "Cannot delete a category in use. Remove or reassign related entries first.",
+      success: false,
+      message:
+          "Category is still carrying expenses. Reassign those first, then we can erase the evidence.",
       });
     }
 
@@ -302,12 +307,12 @@ export const deleteCategory = async (req: AuthRequest, res: Response) => {
     if (!deleted) {
       return res
         .status(404)
-        .json({ success: false, message: "Category not found." });
+        .json({ success: false, message: errorMessage("notFound") });
     }
 
     return res.status(200).json({
       success: true,
-      message: "Category deleted successfully.",
+      message: successMessage("deleted", "category-deleted"),
     });
   } catch (error: unknown) {
     return res.status(500).json({
@@ -335,19 +340,19 @@ export const addExpense = async (req: AuthRequest, res: Response) => {
   if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
     return res
       .status(400)
-      .json({ success: false, message: "A valid amount is required." });
+      .json({ success: false, message: errorMessage("invalidAmount") });
   }
   if (!category?.trim()) {
     return res
       .status(400)
-      .json({ success: false, message: "Expense category is required." });
+      .json({ success: false, message: errorMessage("categoryMissing") });
   }
 
   const expenseDate = date ? new Date(date) : new Date();
   if (Number.isNaN(expenseDate.getTime())) {
     return res
       .status(400)
-      .json({ success: false, message: "Expense date is invalid." });
+      .json({ success: false, message: errorMessage("invalidDate") });
   }
 
   try {
@@ -359,7 +364,7 @@ export const addExpense = async (req: AuthRequest, res: Response) => {
     if (!existingCategory) {
       return res
         .status(400)
-        .json({ success: false, message: "Category does not exist." });
+        .json({ success: false, message: errorMessage("categoryNotFound") });
     }
 
     const expense = await createExpense(
@@ -372,7 +377,7 @@ export const addExpense = async (req: AuthRequest, res: Response) => {
 
     return res.status(201).json({
       success: true,
-      message: "Expense created successfully.",
+      message: successMessage("created", "expense-created"),
       data: expense,
     });
   } catch (error: unknown) {
@@ -444,24 +449,24 @@ export const updateExpenseEntry = async (req: AuthRequest, res: Response) => {
   if (!id) {
     return res
       .status(400)
-      .json({ success: false, message: "Expense id is required." });
+      .json({ success: false, message: errorMessage("missingId") });
   }
   if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
     return res
       .status(400)
-      .json({ success: false, message: "A valid amount is required." });
+      .json({ success: false, message: errorMessage("invalidAmount") });
   }
   if (!category?.trim()) {
     return res
       .status(400)
-      .json({ success: false, message: "Expense category is required." });
+      .json({ success: false, message: errorMessage("categoryMissing") });
   }
 
   const expenseDate = date ? new Date(date) : new Date();
   if (Number.isNaN(expenseDate.getTime())) {
     return res
       .status(400)
-      .json({ success: false, message: "Expense date is invalid." });
+      .json({ success: false, message: errorMessage("invalidDate") });
   }
 
   try {
@@ -475,7 +480,7 @@ export const updateExpenseEntry = async (req: AuthRequest, res: Response) => {
     );
     return res.status(200).json({
       success: true,
-      message: "Expense updated successfully.",
+      message: successMessage("updated", "expense-updated"),
       data: updated,
     });
   } catch (error: unknown) {
@@ -497,14 +502,14 @@ export const deleteExpenseEntry = async (req: AuthRequest, res: Response) => {
   if (!id) {
     return res
       .status(400)
-      .json({ success: false, message: "Expense id is required." });
+      .json({ success: false, message: errorMessage("missingId") });
   }
 
   try {
     const deleted = await deleteExpense(auth.userId, id);
     return res.status(200).json({
       success: true,
-      message: "Expense deleted successfully.",
+      message: successMessage("deleted", "expense-deleted"),
       data: deleted,
     });
   } catch (error: unknown) {
@@ -550,21 +555,21 @@ export const addSalaryEntry = async (req: AuthRequest, res: Response) => {
   if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
     return res
       .status(400)
-      .json({ success: false, message: "A valid salary amount is required." });
+      .json({ success: false, message: errorMessage("invalidAmount") });
   }
 
   const salaryDate = date ? new Date(date) : new Date();
   if (Number.isNaN(salaryDate.getTime())) {
     return res
       .status(400)
-      .json({ success: false, message: "Salary date is invalid." });
+      .json({ success: false, message: errorMessage("invalidDate") });
   }
 
   try {
     const salary = await addSalary(auth.userId, amount, salaryDate);
     return res.status(201).json({
       success: true,
-      message: "Salary added successfully.",
+      message: successMessage("created", "salary-added"),
       data: salary,
     });
   } catch (error: unknown) {
@@ -635,17 +640,17 @@ export const createLoanEntry = async (req: AuthRequest, res: Response) => {
   if (!borrower?.trim()) {
     return res
       .status(400)
-      .json({ success: false, message: "Borrower is required." });
+      .json({ success: false, message: "Borrower is required. Money needs a destination, not a fog machine." });
   }
   if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
     return res
       .status(400)
-      .json({ success: false, message: "A valid loan amount is required." });
+      .json({ success: false, message: errorMessage("invalidAmount") });
   }
   if (!sourceType || !["PERSONAL", "BORROWED"].includes(sourceType)) {
     return res.status(400).json({
       success: false,
-      message: "sourceType must be PERSONAL or BORROWED.",
+      message: "sourceType must be PERSONAL or BORROWED. The money origin story matters.",
     });
   }
 
@@ -659,7 +664,7 @@ export const createLoanEntry = async (req: AuthRequest, res: Response) => {
     );
     return res.status(201).json({
       success: true,
-      message: "Loan created successfully.",
+      message: successMessage("created", "loan-created"),
       data: loan,
     });
   } catch (error: unknown) {
@@ -693,7 +698,7 @@ export const repayLoanEntry = async (req: AuthRequest, res: Response) => {
   if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
     return res.status(400).json({
       success: false,
-      message: "A valid repayment amount is required.",
+      message: errorMessage("invalidAmount"),
     });
   }
 
@@ -703,7 +708,7 @@ export const repayLoanEntry = async (req: AuthRequest, res: Response) => {
     const loan = await repayLoan(auth.userId, loanId, amount, creditorValue);
     return res.status(200).json({
       success: true,
-      message: "Loan repayment recorded successfully.",
+      message: successMessage("updated", "loan-repaid"),
       data: loan,
     });
   } catch (error: unknown) {
@@ -781,7 +786,7 @@ export const getFinanceSummary = async (req: AuthRequest, res: Response) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: "Both month (1–12) and year must be provided together.",
+        message: "Month and year travel as a pair. Do not separate the duo.",
       });
     }
 
@@ -844,19 +849,19 @@ export const addIncome = async (req: AuthRequest, res: Response) => {
   if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
     return res
       .status(400)
-      .json({ success: false, message: "A valid amount is required." });
+      .json({ success: false, message: errorMessage("invalidAmount") });
   }
   if (!source?.trim()) {
     return res
       .status(400)
-      .json({ success: false, message: "Income source is required." });
+      .json({ success: false, message: errorMessage("sourceMissing") });
   }
 
   const incomeDate = date ? new Date(date) : new Date();
   if (Number.isNaN(incomeDate.getTime())) {
     return res
       .status(400)
-      .json({ success: false, message: "Income date is invalid." });
+      .json({ success: false, message: errorMessage("invalidDate") });
   }
 
   try {
@@ -869,7 +874,7 @@ export const addIncome = async (req: AuthRequest, res: Response) => {
     );
     return res.status(201).json({
       success: true,
-      message: "Income recorded successfully.",
+      message: successMessage("created", "income-created"),
       data: income,
     });
   } catch (error: unknown) {
@@ -897,19 +902,19 @@ export const addSavings = async (req: AuthRequest, res: Response) => {
   if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
     return res
       .status(400)
-      .json({ success: false, message: "A valid amount is required." });
+      .json({ success: false, message: errorMessage("invalidAmount") });
   }
   if (!sourceName?.trim()) {
     return res
       .status(400)
-      .json({ success: false, message: "Savings source name is required." });
+      .json({ success: false, message: errorMessage("sourceMissing") });
   }
 
   const savingsDate = date ? new Date(date) : new Date();
   if (Number.isNaN(savingsDate.getTime())) {
     return res
       .status(400)
-      .json({ success: false, message: "Savings date is invalid." });
+      .json({ success: false, message: errorMessage("invalidDate") });
   }
 
   try {
@@ -922,7 +927,7 @@ export const addSavings = async (req: AuthRequest, res: Response) => {
     );
     return res.status(201).json({
       success: true,
-      message: "Savings recorded successfully.",
+      message: successMessage("created", "savings-created"),
       data: savings,
     });
   } catch (error: unknown) {

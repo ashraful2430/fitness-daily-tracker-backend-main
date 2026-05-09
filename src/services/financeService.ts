@@ -114,7 +114,7 @@ function normalizeOptionalText(value: string | null | undefined) {
 
 export async function getBalanceSources(userId: string) {
   const [sources, balanceSummary] = await Promise.all([
-    BalanceAccount.find({ userId }).sort({ type: 1, createdAt: -1 }),
+    BalanceAccount.find({ userId }).sort({ type: 1, createdAt: -1 }).lean(),
     BalanceAccount.aggregate([
       { $match: { userId } },
       { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
@@ -712,7 +712,8 @@ export async function getSalaryHistory(
     SalaryMonth.find({ userId })
       .sort({ year: -1, month: -1 })
       .skip(skip)
-      .limit(limitNumber),
+      .limit(limitNumber)
+      .lean(),
     SalaryMonth.countDocuments({ userId }),
   ]);
 
@@ -940,7 +941,7 @@ export async function getLoans(
   const skip = (page - 1) * limit;
 
   const [loans, total] = await Promise.all([
-    Loan.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Loan.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     Loan.countDocuments(query),
   ]);
 
@@ -956,7 +957,7 @@ export async function getLoans(
 }
 
 export async function getDebts(userId: string) {
-  const debts = await ExternalDebt.find({ userId }).sort({ updatedAt: -1 });
+  const debts = await ExternalDebt.find({ userId }).sort({ updatedAt: -1 }).lean();
   return debts;
 }
 
@@ -1046,7 +1047,9 @@ export async function getSummaryForMonth(
       SalaryMonth.findOne({
         userId,
         $or: [{ year: { $lt: year } }, { year, month: { $lte: month } }],
-      }).sort({ year: -1, month: -1 }),
+      })
+        .sort({ year: -1, month: -1 })
+        .lean(),
     ]);
 
   const availableBalance = balanceStats[0]?.totalAmount ?? 0;

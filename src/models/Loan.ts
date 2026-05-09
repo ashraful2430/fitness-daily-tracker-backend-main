@@ -55,5 +55,7 @@ const loanSchema = new Schema<ILoan>(
 );
 
 loanSchema.index({ userId: 1, status: 1 });
+loanSchema.index({ userId: 1, status: 1, createdAt: -1 });
+loanSchema.index({ userId: 1, createdAt: -1 });
 
 export default model<ILoan>("Loan", loanSchema);
