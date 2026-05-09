@@ -8,6 +8,7 @@ const Category_1 = __importDefault(require("../models/Category"));
 const Expense_1 = __importDefault(require("../models/Expense"));
 const BalanceAccount_1 = require("../models/BalanceAccount");
 const financeService_1 = require("../services/financeService");
+const canonicalFinanceSummaryService_1 = require("../services/canonicalFinanceSummaryService");
 const financeUtils_1 = require("../utils/financeUtils");
 const apiMessages_1 = require("../utils/apiMessages");
 function getErrorMessage(error) {
@@ -671,8 +672,12 @@ const getFinanceSummary = async (req, res) => {
         }
     }
     try {
-        const summary = await (0, financeService_1.getSummary)(auth.userId);
-        return res.status(200).json({ success: true, data: summary });
+        const summary = await (0, canonicalFinanceSummaryService_1.getCanonicalFinanceSummary)(auth.userId);
+        return res.status(200).json({
+            success: true,
+            message: (0, apiMessages_1.successMessage)("fetched", "finance-summary"),
+            data: summary,
+        });
     }
     catch (error) {
         return res

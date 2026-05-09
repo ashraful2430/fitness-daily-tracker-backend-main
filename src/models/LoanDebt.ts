@@ -36,5 +36,6 @@ const loanDebtSchema = new Schema<ILoanDebt>(
 
 loanDebtSchema.index({ userId: 1, status: 1 });
 loanDebtSchema.index({ userId: 1, createdAt: -1 });
+loanDebtSchema.index({ userId: 1, linkedLendingId: 1 });
 
 export default model<ILoanDebt>("LoanDebt", loanDebtSchema);

@@ -27,6 +27,7 @@ import {
   createIncomeRecord,
   createSavingsRecord,
 } from "../services/financeService";
+import { getCanonicalFinanceSummary } from "../services/canonicalFinanceSummaryService";
 import {
   formatCategoryLabel,
   normalizeCategoryName,
@@ -801,8 +802,12 @@ export const getFinanceSummary = async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const summary = await getSummary(auth.userId);
-    return res.status(200).json({ success: true, data: summary });
+    const summary = await getCanonicalFinanceSummary(auth.userId);
+    return res.status(200).json({
+      success: true,
+      message: successMessage("fetched", "finance-summary"),
+      data: summary,
+    });
   } catch (error: unknown) {
     return res
       .status(500)

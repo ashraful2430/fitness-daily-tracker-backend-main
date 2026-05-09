@@ -21,4 +21,5 @@ const loanDebtSchema = new mongoose_1.Schema({
 }, { timestamps: true });
 loanDebtSchema.index({ userId: 1, status: 1 });
 loanDebtSchema.index({ userId: 1, createdAt: -1 });
+loanDebtSchema.index({ userId: 1, linkedLendingId: 1 });
 exports.default = (0, mongoose_1.model)("LoanDebt", loanDebtSchema);

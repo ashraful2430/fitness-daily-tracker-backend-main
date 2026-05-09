@@ -43,6 +43,7 @@ const Lending_1 = __importDefault(require("../models/Lending"));
 const BalanceAccount_1 = __importDefault(require("../models/BalanceAccount"));
 const BalanceRecord_1 = __importDefault(require("../models/BalanceRecord"));
 const TransactionLedger_1 = __importDefault(require("../models/TransactionLedger"));
+const canonicalFinanceSummaryService_1 = require("../services/canonicalFinanceSummaryService");
 const apiMessages_1 = require("../utils/apiMessages");
 // ─── Errors ───────────────────────────────────────────────────────────────────
 class ApiError extends Error {
@@ -110,6 +111,14 @@ async function deductFromBalance(userId, amount, session) {
 async function creditCashBalance(userId, amount, session) {
     await BalanceAccount_1.default.findOneAndUpdate({ userId, type: "CASH" }, { $inc: { amount } }, { new: true, upsert: true, setDefaultsOnInsert: true, session });
 }
+async function syncBalanceRecord(userId, session) {
+    const agg = await BalanceAccount_1.default.aggregate([
+        { $match: { userId } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]).session(session);
+    const total = agg[0]?.total ?? 0;
+    await BalanceRecord_1.default.findOneAndUpdate({ userId }, { userId, amount: total }, { new: true, upsert: true, setDefaultsOnInsert: true, session });
+}
 // ─── Loans ────────────────────────────────────────────────────────────────────
 const createLoan = async (req, res) => {
     const userId = req.userId;
@@ -147,12 +156,7 @@ const createLoan = async (req, res) => {
                     referenceId: loan._id.toString(),
                 },
             ], { session });
-            const agg = await BalanceAccount_1.default.aggregate([
-                { $match: { userId } },
-                { $group: { _id: null, total: { $sum: "$amount" } } },
-            ]).session(session);
-            const total = agg[0]?.total ?? 0;
-            await BalanceRecord_1.default.findOneAndUpdate({ userId }, { userId, amount: total }, { new: true, upsert: true, setDefaultsOnInsert: true, session });
+            await syncBalanceRecord(userId, session);
         });
         return res.status(201).json({
             success: true,
@@ -189,24 +193,43 @@ const payLoan = async (req, res) => {
     const { amount } = req.body;
     if (typeof amount !== "number" || amount <= 0)
         return sendError(res, 400, (0, apiMessages_1.errorMessage)("invalidAmount"), "amount");
+    const session = await mongoose_1.default.startSession();
     try {
-        const loan = await LoanDebt_1.default.findOne({ _id: loanId, userId });
-        if (!loan)
-            return sendError(res, 404, (0, apiMessages_1.errorMessage)("notFound"));
-        if (loan.status === "PAID")
-            return sendError(res, 400, "Loan is already paid. Stop trying to pay a ghost bill.");
-        const remaining = loan.amount - loan.paidAmount;
-        if (amount > remaining)
-            return sendError(res, 400, `Amount exceeds remaining balance of ${remaining}`, "amount");
-        loan.paidAmount += amount;
-        if (loan.paidAmount >= loan.amount) {
-            loan.paidAmount = loan.amount;
-            loan.status = "PAID";
-        }
-        else {
-            loan.status = "PARTIALLY_PAID";
-        }
-        await loan.save();
+        let loan;
+        await session.withTransaction(async () => {
+            loan = await LoanDebt_1.default.findOne({ _id: loanId, userId }).session(session);
+            if (!loan)
+                throw new ApiError(404, (0, apiMessages_1.errorMessage)("notFound"));
+            if (loan.status === "PAID")
+                throw new ApiError(400, "Loan is already paid. Stop trying to pay a ghost bill.");
+            const remaining = loan.amount - loan.paidAmount;
+            if (amount > remaining)
+                throw new ApiError(400, `Amount exceeds remaining balance of ${remaining}`, "amount");
+            const available = await getAvailableBalance(userId, session);
+            if (amount > available) {
+                throw new ApiError(400, `Insufficient balance. Available: ${available}. Wallet said sit down.`, "amount");
+            }
+            await deductFromBalance(userId, amount, session);
+            loan.paidAmount += amount;
+            if (loan.paidAmount >= loan.amount) {
+                loan.paidAmount = loan.amount;
+                loan.status = "PAID";
+            }
+            else {
+                loan.status = "PARTIALLY_PAID";
+            }
+            await loan.save({ session });
+            await TransactionLedger_1.default.create([
+                {
+                    userId,
+                    type: "DEBIT",
+                    source: "LOAN_REPAID",
+                    amount,
+                    referenceId: loan._id.toString(),
+                },
+            ], { session });
+            await syncBalanceRecord(userId, session);
+        });
         return res.status(200).json({
             success: true,
             message: (0, apiMessages_1.successMessage)("updated", "loan-debt-paid"),
@@ -215,6 +238,9 @@ const payLoan = async (req, res) => {
     }
     catch (e) {
         return handleError(res, e);
+    }
+    finally {
+        session.endSession();
     }
 };
 exports.payLoan = payLoan;
@@ -266,6 +292,7 @@ const createLending = async (req, res) => {
                     throw new ApiError(400, `Insufficient balance. Available: ${available}. Wallet said sit down.`, "amount");
                 }
                 await deductFromBalance(userId, amount, session);
+                await syncBalanceRecord(userId, session);
                 const docs = await Lending_1.default.create([
                     {
                         userId,
@@ -363,16 +390,34 @@ const repayLending = async (req, res) => {
             }
             await lending.save({ session });
             if (fullyRepaid) {
-                if (lending.fundingSource === "PERSONAL") {
-                    await creditCashBalance(userId, lending.amount, session);
-                }
-                else if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
-                    await LoanDebt_1.default.findOneAndUpdate({ _id: lending.linkedLoanId, userId }, { status: "PAID", paidAmount: lending.amount }, { session });
+                if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
+                    const linkedLoan = await LoanDebt_1.default.findOne({
+                        _id: lending.linkedLoanId,
+                        userId,
+                    }).session(session);
+                    if (linkedLoan) {
+                        linkedLoan.paidAmount = linkedLoan.amount;
+                        linkedLoan.status = "PAID";
+                        await linkedLoan.save({ session });
+                    }
                 }
             }
-            else if (lending.fundingSource === "PERSONAL") {
+            if (lending.fundingSource === "PERSONAL") {
                 await creditCashBalance(userId, amount, session);
             }
+            else if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
+                const linkedLoan = await LoanDebt_1.default.findOne({
+                    _id: lending.linkedLoanId,
+                    userId,
+                }).session(session);
+                if (linkedLoan) {
+                    linkedLoan.paidAmount = Math.min(linkedLoan.paidAmount + amount, linkedLoan.amount);
+                    linkedLoan.status =
+                        linkedLoan.paidAmount >= linkedLoan.amount ? "PAID" : "PARTIALLY_PAID";
+                    await linkedLoan.save({ session });
+                }
+            }
+            await syncBalanceRecord(userId, session);
         });
         return res.status(200).json({
             success: true,
@@ -437,37 +482,11 @@ const getFinanceSummary = async (req, res) => {
     if (!userId)
         return sendError(res, 401, (0, apiMessages_1.errorMessage)("unauthorized"));
     try {
-        const [balanceResult, loanResult, lendingResult] = await Promise.all([
-            BalanceAccount_1.default.aggregate([
-                { $match: { userId } },
-                { $group: { _id: null, total: { $sum: "$amount" } } },
-            ]),
-            LoanDebt_1.default.aggregate([
-                { $match: { userId, status: { $in: ["ACTIVE", "PARTIALLY_PAID"] } } },
-                {
-                    $group: {
-                        _id: null,
-                        total: { $sum: { $subtract: ["$amount", "$paidAmount"] } },
-                    },
-                },
-            ]),
-            Lending_1.default.aggregate([
-                { $match: { userId, status: { $in: ["ACTIVE", "PARTIALLY_REPAID"] } } },
-                {
-                    $group: {
-                        _id: null,
-                        total: { $sum: { $subtract: ["$amount", "$repaidAmount"] } },
-                    },
-                },
-            ]),
-        ]);
-        const availableBalance = balanceResult[0]?.total ?? 0;
-        const totalLoanDebt = loanResult[0]?.total ?? 0;
-        const totalLending = lendingResult[0]?.total ?? 0;
-        const netBalance = availableBalance - totalLoanDebt + totalLending;
+        const summary = await (0, canonicalFinanceSummaryService_1.getCanonicalFinanceSummary)(userId);
         return res.status(200).json({
             success: true,
-            data: { availableBalance, totalLoanDebt, totalLending, netBalance },
+            message: (0, apiMessages_1.successMessage)("fetched", "finance-summary"),
+            data: summary,
         });
     }
     catch (e) {

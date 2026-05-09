@@ -6,6 +6,7 @@ import Lending from "../models/Lending";
 import BalanceAccount from "../models/BalanceAccount";
 import BalanceRecord from "../models/BalanceRecord";
 import TransactionLedger from "../models/TransactionLedger";
+import { getCanonicalFinanceSummary } from "../services/canonicalFinanceSummaryService";
 import { errorMessage, successMessage } from "../utils/apiMessages";
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
@@ -109,6 +110,23 @@ async function creditCashBalance(
   );
 }
 
+async function syncBalanceRecord(
+  userId: string,
+  session: mongoose.ClientSession,
+): Promise<void> {
+  const agg = await BalanceAccount.aggregate([
+    { $match: { userId } },
+    { $group: { _id: null, total: { $sum: "$amount" } } },
+  ]).session(session);
+  const total = agg[0]?.total ?? 0;
+
+  await BalanceRecord.findOneAndUpdate(
+    { userId },
+    { userId, amount: total },
+    { new: true, upsert: true, setDefaultsOnInsert: true, session },
+  );
+}
+
 // ─── Loans ────────────────────────────────────────────────────────────────────
 
 export const createLoan = async (req: AuthRequest, res: Response) => {
@@ -167,16 +185,7 @@ export const createLoan = async (req: AuthRequest, res: Response) => {
         { session },
       );
 
-      const agg = await BalanceAccount.aggregate([
-        { $match: { userId } },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
-      ]).session(session);
-      const total = agg[0]?.total ?? 0;
-      await BalanceRecord.findOneAndUpdate(
-        { userId },
-        { userId, amount: total },
-        { new: true, upsert: true, setDefaultsOnInsert: true, session },
-      );
+      await syncBalanceRecord(userId, session);
     });
 
     return res.status(201).json({
@@ -213,24 +222,54 @@ export const payLoan = async (req: AuthRequest, res: Response) => {
   if (typeof amount !== "number" || amount <= 0)
     return sendError(res, 400, errorMessage("invalidAmount"), "amount");
 
+  const session = await mongoose.startSession();
   try {
-    const loan = await LoanDebt.findOne({ _id: loanId, userId });
-    if (!loan) return sendError(res, 404, errorMessage("notFound"));
-    if (loan.status === "PAID") return sendError(res, 400, "Loan is already paid. Stop trying to pay a ghost bill.");
+    let loan: any;
+    await session.withTransaction(async () => {
+      loan = await LoanDebt.findOne({ _id: loanId, userId }).session(session);
+      if (!loan) throw new ApiError(404, errorMessage("notFound"));
+      if (loan.status === "PAID")
+        throw new ApiError(400, "Loan is already paid. Stop trying to pay a ghost bill.");
 
-    const remaining = loan.amount - loan.paidAmount;
-    if (amount > remaining)
-      return sendError(res, 400, `Amount exceeds remaining balance of ${remaining}`, "amount");
+      const remaining = loan.amount - loan.paidAmount;
+      if (amount > remaining)
+        throw new ApiError(400, `Amount exceeds remaining balance of ${remaining}`, "amount");
 
-    loan.paidAmount += amount;
-    if (loan.paidAmount >= loan.amount) {
-      loan.paidAmount = loan.amount;
-      loan.status = "PAID";
-    } else {
-      loan.status = "PARTIALLY_PAID";
-    }
+      const available = await getAvailableBalance(userId, session);
+      if (amount > available) {
+        throw new ApiError(
+          400,
+          `Insufficient balance. Available: ${available}. Wallet said sit down.`,
+          "amount",
+        );
+      }
 
-    await loan.save();
+      await deductFromBalance(userId, amount, session);
+
+      loan.paidAmount += amount;
+      if (loan.paidAmount >= loan.amount) {
+        loan.paidAmount = loan.amount;
+        loan.status = "PAID";
+      } else {
+        loan.status = "PARTIALLY_PAID";
+      }
+
+      await loan.save({ session });
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "DEBIT",
+            source: "LOAN_REPAID",
+            amount,
+            referenceId: loan._id.toString(),
+          },
+        ],
+        { session },
+      );
+      await syncBalanceRecord(userId, session);
+    });
+
     return res.status(200).json({
       success: true,
       message: successMessage("updated", "loan-debt-paid"),
@@ -238,6 +277,8 @@ export const payLoan = async (req: AuthRequest, res: Response) => {
     });
   } catch (e) {
     return handleError(res, e);
+  } finally {
+    session.endSession();
   }
 };
 
@@ -313,6 +354,7 @@ export const createLending = async (req: AuthRequest, res: Response) => {
           );
         }
         await deductFromBalance(userId, amount, session);
+        await syncBalanceRecord(userId, session);
 
         const docs = await Lending.create(
           [
@@ -428,18 +470,35 @@ export const repayLending = async (req: AuthRequest, res: Response) => {
       await lending.save({ session });
 
       if (fullyRepaid) {
-        if (lending.fundingSource === "PERSONAL") {
-          await creditCashBalance(userId, lending.amount, session);
-        } else if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
-          await LoanDebt.findOneAndUpdate(
-            { _id: lending.linkedLoanId, userId },
-            { status: "PAID", paidAmount: lending.amount },
-            { session },
-          );
+        if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
+          const linkedLoan = await LoanDebt.findOne({
+            _id: lending.linkedLoanId,
+            userId,
+          }).session(session);
+          if (linkedLoan) {
+            linkedLoan.paidAmount = linkedLoan.amount;
+            linkedLoan.status = "PAID";
+            await linkedLoan.save({ session });
+          }
         }
-      } else if (lending.fundingSource === "PERSONAL") {
-        await creditCashBalance(userId, amount, session);
       }
+
+      if (lending.fundingSource === "PERSONAL") {
+        await creditCashBalance(userId, amount, session);
+      } else if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
+        const linkedLoan = await LoanDebt.findOne({
+          _id: lending.linkedLoanId,
+          userId,
+        }).session(session);
+        if (linkedLoan) {
+          linkedLoan.paidAmount = Math.min(linkedLoan.paidAmount + amount, linkedLoan.amount);
+          linkedLoan.status =
+            linkedLoan.paidAmount >= linkedLoan.amount ? "PAID" : "PARTIALLY_PAID";
+          await linkedLoan.save({ session });
+        }
+      }
+
+      await syncBalanceRecord(userId, session);
     });
 
     return res.status(200).json({
@@ -505,39 +564,11 @@ export const getFinanceSummary = async (req: AuthRequest, res: Response) => {
   if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
   try {
-    const [balanceResult, loanResult, lendingResult] = await Promise.all([
-      BalanceAccount.aggregate([
-        { $match: { userId } },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
-      ]),
-      LoanDebt.aggregate([
-        { $match: { userId, status: { $in: ["ACTIVE", "PARTIALLY_PAID"] } } },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: { $subtract: ["$amount", "$paidAmount"] } },
-          },
-        },
-      ]),
-      Lending.aggregate([
-        { $match: { userId, status: { $in: ["ACTIVE", "PARTIALLY_REPAID"] } } },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: { $subtract: ["$amount", "$repaidAmount"] } },
-          },
-        },
-      ]),
-    ]);
-
-    const availableBalance: number = balanceResult[0]?.total ?? 0;
-    const totalLoanDebt: number = loanResult[0]?.total ?? 0;
-    const totalLending: number = lendingResult[0]?.total ?? 0;
-    const netBalance = availableBalance - totalLoanDebt + totalLending;
-
+    const summary = await getCanonicalFinanceSummary(userId);
     return res.status(200).json({
       success: true,
-      data: { availableBalance, totalLoanDebt, totalLending, netBalance },
+      message: successMessage("fetched", "finance-summary"),
+      data: summary,
     });
   } catch (e) {
     return handleError(res, e);

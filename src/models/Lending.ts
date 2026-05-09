@@ -42,5 +42,6 @@ const lendingSchema = new Schema<ILending>(
 
 lendingSchema.index({ userId: 1, status: 1 });
 lendingSchema.index({ userId: 1, createdAt: -1 });
+lendingSchema.index({ userId: 1, linkedLoanId: 1 });
 
 export default model<ILending>("Lending", lendingSchema);
