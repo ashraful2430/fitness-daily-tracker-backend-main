@@ -62,6 +62,8 @@ const learningSessionSchema = new mongoose_1.Schema({
 });
 learningSessionSchema.index({ userId: 1, date: -1, createdAt: -1 });
 learningSessionSchema.index({ userId: 1, status: 1 });
+learningSessionSchema.index({ userId: 1, status: 1, updatedAt: -1 });
 learningSessionSchema.index({ userId: 1, subject: 1 });
 learningSessionSchema.index({ userId: 1, updatedAt: -1 });
+learningSessionSchema.index({ userId: 1, updatedAt: -1, date: -1 });
 exports.default = (0, mongoose_1.model)("LearningSession", learningSessionSchema);

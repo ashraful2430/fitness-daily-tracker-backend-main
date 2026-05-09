@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.updateDailyAnalytics = updateDailyAnalytics;
 exports.getAnalyticsInsights = getAnalyticsInsights;
+const mongoose_1 = __importDefault(require("mongoose"));
 const DailyAnalytics_1 = __importDefault(require("../models/DailyAnalytics"));
 function startOfDay(date) {
     const value = new Date(date);
@@ -68,10 +69,36 @@ async function updateDailyAnalytics(userId, updates) {
     return analytics;
 }
 async function getAnalyticsInsights(userId) {
-    const allAnalytics = await DailyAnalytics_1.default.find({ userId }).sort({
-        date: -1,
-    });
-    if (!allAnalytics.length) {
+    const objectUserId = new mongoose_1.default.Types.ObjectId(userId);
+    const [summaryAgg, recentAnalytics] = await Promise.all([
+        DailyAnalytics_1.default.aggregate([
+            { $match: { userId: objectUserId } },
+            {
+                $group: {
+                    _id: null,
+                    totalDays: { $sum: 1 },
+                    perfectDays: {
+                        $sum: {
+                            $cond: ["$perfectDay", 1, 0],
+                        },
+                    },
+                    missedDays: {
+                        $sum: {
+                            $cond: [{ $eq: ["$score", 0] }, 1, 0],
+                        },
+                    },
+                    bestScore: { $max: "$score" },
+                },
+            },
+        ]),
+        DailyAnalytics_1.default.find({ userId: objectUserId })
+            .sort({ date: -1 })
+            .limit(14)
+            .select("score")
+            .lean(),
+    ]);
+    const summary = summaryAgg[0];
+    if (!summary) {
         return {
             perfectDays: 0,
             missedDays: 0,
@@ -80,11 +107,8 @@ async function getAnalyticsInsights(userId) {
             productivityTrend: "stable",
         };
     }
-    const perfectDays = allAnalytics.filter((day) => day.perfectDay).length;
-    const missedDays = allAnalytics.filter((day) => day.score === 0).length;
-    const bestScore = Math.max(...allAnalytics.map((day) => day.score));
-    const last7Days = allAnalytics.slice(0, 7);
-    const previous7Days = allAnalytics.slice(7, 14);
+    const last7Days = recentAnalytics.slice(0, 7);
+    const previous7Days = recentAnalytics.slice(7, 14);
     const weeklyAverageScore = last7Days.length
         ? Math.round(last7Days.reduce((sum, day) => sum + day.score, 0) / last7Days.length)
         : 0;
@@ -100,9 +124,9 @@ async function getAnalyticsInsights(userId) {
         productivityTrend = "down";
     }
     return {
-        perfectDays,
-        missedDays,
-        bestScore,
+        perfectDays: summary.perfectDays,
+        missedDays: summary.missedDays,
+        bestScore: summary.bestScore ?? 0,
         weeklyAverageScore,
         productivityTrend,
     };

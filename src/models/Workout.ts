@@ -42,4 +42,6 @@ const WorkoutSchema = new Schema<IWorkout>(
   { timestamps: true },
 );
 
+WorkoutSchema.index({ userId: 1, createdAt: -1 });
+
 export default mongoose.model<IWorkout>("Workout", WorkoutSchema);

@@ -138,10 +138,8 @@ async function listLearningSessions(userId, filters) {
         },
     };
 }
-function computeCurrentStreak(sessions) {
-    const qualifyingDates = new Set(sessions
-        .filter((session) => session.status === "completed" || session.actualMinutes > 0)
-        .map((session) => session.date));
+function computeCurrentStreak(dates) {
+    const qualifyingDates = new Set(dates);
     if (qualifyingDates.size === 0) {
         return 0;
     }
@@ -160,47 +158,86 @@ function computeCurrentStreak(sessions) {
 async function getLearningSummary(userId) {
     const today = getTodayDateString();
     const weekStart = getStartOfWeekDateString();
-    const [todayAgg, weekAgg, totalAgg, totalSessions, completedSessions, activeSession, topSubjects, recentSessions, streakSessions] = await Promise.all([
-        LearningSession_1.default.aggregate([
-            { $match: { userId, date: today } },
-            { $group: { _id: null, totalMinutes: { $sum: "$actualMinutes" } } },
-        ]),
-        LearningSession_1.default.aggregate([
-            { $match: { userId, date: { $gte: weekStart, $lte: today } } },
-            { $group: { _id: null, totalMinutes: { $sum: "$actualMinutes" } } },
-        ]),
-        LearningSession_1.default.aggregate([
-            { $match: { userId } },
-            { $group: { _id: null, totalMinutes: { $sum: "$actualMinutes" } } },
-        ]),
-        LearningSession_1.default.countDocuments({ userId }),
-        LearningSession_1.default.countDocuments({ userId, status: "completed" }),
-        LearningSession_1.default.findOne({ userId, status: "active" })
-            .sort({ updatedAt: -1 })
-            .lean(),
+    const [summaryAgg, activeSession, recentSessions] = await Promise.all([
         LearningSession_1.default.aggregate([
             { $match: { userId } },
             {
-                $group: {
-                    _id: "$subject",
-                    totalMinutes: { $sum: "$actualMinutes" },
-                    sessionCount: { $sum: 1 },
+                $facet: {
+                    totals: [
+                        {
+                            $group: {
+                                _id: null,
+                                todayMinutes: {
+                                    $sum: {
+                                        $cond: [{ $eq: ["$date", today] }, "$actualMinutes", 0],
+                                    },
+                                },
+                                weekMinutes: {
+                                    $sum: {
+                                        $cond: [
+                                            {
+                                                $and: [
+                                                    { $gte: ["$date", weekStart] },
+                                                    { $lte: ["$date", today] },
+                                                ],
+                                            },
+                                            "$actualMinutes",
+                                            0,
+                                        ],
+                                    },
+                                },
+                                totalMinutes: { $sum: "$actualMinutes" },
+                                totalSessions: { $sum: 1 },
+                                completedSessions: {
+                                    $sum: {
+                                        $cond: [{ $eq: ["$status", "completed"] }, 1, 0],
+                                    },
+                                },
+                            },
+                        },
+                    ],
+                    topSubjects: [
+                        {
+                            $group: {
+                                _id: "$subject",
+                                totalMinutes: { $sum: "$actualMinutes" },
+                                sessionCount: { $sum: 1 },
+                            },
+                        },
+                        { $sort: { totalMinutes: -1, sessionCount: -1, _id: 1 } },
+                        { $limit: 5 },
+                    ],
+                    streakDates: [
+                        {
+                            $match: {
+                                $or: [
+                                    { status: "completed" },
+                                    { actualMinutes: { $gt: 0 } },
+                                ],
+                            },
+                        },
+                        { $group: { _id: "$date" } },
+                        { $sort: { _id: -1 } },
+                    ],
                 },
             },
-            { $sort: { totalMinutes: -1, sessionCount: -1, _id: 1 } },
-            { $limit: 5 },
         ]),
+        LearningSession_1.default.findOne({ userId, status: "active" })
+            .sort({ updatedAt: -1 })
+            .lean(),
         LearningSession_1.default.find({ userId })
             .sort({ updatedAt: -1, date: -1 })
             .limit(5)
             .lean(),
-        LearningSession_1.default.find({ userId })
-            .select("date status actualMinutes")
-            .lean(),
     ]);
-    const todayMinutes = todayAgg[0]?.totalMinutes ?? 0;
-    const weekMinutes = weekAgg[0]?.totalMinutes ?? 0;
-    const totalMinutes = totalAgg[0]?.totalMinutes ?? 0;
+    const summary = summaryAgg[0];
+    const totals = summary?.totals?.[0] ?? {};
+    const todayMinutes = totals.todayMinutes ?? 0;
+    const weekMinutes = totals.weekMinutes ?? 0;
+    const totalMinutes = totals.totalMinutes ?? 0;
+    const totalSessions = totals.totalSessions ?? 0;
+    const completedSessions = totals.completedSessions ?? 0;
+    const streakDates = (summary?.streakDates ?? []).map((item) => item._id);
     return {
         data: {
             todayMinutes,
@@ -211,9 +248,9 @@ async function getLearningSummary(userId) {
             completionRate: totalSessions === 0
                 ? 0
                 : Math.round((completedSessions / totalSessions) * 100),
-            currentStreak: computeCurrentStreak(streakSessions),
+            currentStreak: computeCurrentStreak(streakDates),
             activeSession: activeSession ?? null,
-            topSubjects,
+            topSubjects: summary?.topSubjects ?? [],
             recentSessions,
         },
     };
