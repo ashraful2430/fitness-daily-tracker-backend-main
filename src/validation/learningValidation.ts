@@ -136,6 +136,30 @@ function parseStatus(value: unknown): ValidationResult<LearningSessionStatus> {
   };
 }
 
+function parseOptionalText(
+  value: unknown,
+  fieldName: string,
+): ValidationResult<string | undefined> {
+  if (value === undefined || value === null) {
+    return {
+      success: true,
+      data: undefined,
+    };
+  }
+
+  if (typeof value !== "string") {
+    return {
+      success: false,
+      message: `${fieldName} must be a string when provided.`,
+    };
+  }
+
+  return {
+    success: true,
+    data: value.trim(),
+  };
+}
+
 export function validateCreateLearningSession(
   body: unknown,
 ): ValidationResult<CreateLearningSessionInput> {
@@ -150,8 +174,10 @@ export function validateCreateLearningSession(
   const title = typeof payload.title === "string" ? payload.title.trim() : "";
   const subject =
     typeof payload.subject === "string" ? payload.subject.trim() : "";
-  const notes =
-    typeof payload.notes === "string" ? payload.notes.trim() : undefined;
+  const notes = parseOptionalText(payload.notes, "notes");
+  if (!notes.success) {
+    return notes;
+  }
   const date = typeof payload.date === "string" ? payload.date.trim() : "";
 
   if (!title) {
@@ -222,7 +248,7 @@ export function validateCreateLearningSession(
       plannedMinutes: plannedMinutes.data,
       actualMinutes,
       status,
-      notes,
+      notes: notes.data,
       date,
       startedAt: startedAt.value,
       completedAt: completedAt.value,

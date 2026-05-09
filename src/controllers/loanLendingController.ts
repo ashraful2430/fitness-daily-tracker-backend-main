@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import { Response } from "express";
 import { AuthRequest } from "../middleware/authMiddleware";
-import LoanDebt from "../models/LoanDebt";
+import LoanDebt, { DEFAULT_LOAN_REASON } from "../models/LoanDebt";
 import Lending from "../models/Lending";
 import BalanceAccount from "../models/BalanceAccount";
 import BalanceRecord from "../models/BalanceRecord";
@@ -39,6 +39,15 @@ function handleError(res: Response, e: unknown) {
 
 function resolveId(param: string | string[]) {
   return Array.isArray(param) ? param[0] : param;
+}
+
+function normalizeOptionalText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeLoanReason(value: unknown) {
+  const reason = normalizeOptionalText(value);
+  return reason || DEFAULT_LOAN_REASON;
 }
 
 // ─── Balance helpers ──────────────────────────────────────────────────────────
@@ -116,8 +125,6 @@ export const createLoan = async (req: AuthRequest, res: Response) => {
     return sendError(res, 400, "personName is required", "personName");
   if (typeof amount !== "number" || amount <= 0)
     return sendError(res, 400, "amount must be greater than 0", "amount");
-  if (!reason?.trim())
-    return sendError(res, 400, "reason is required", "reason");
 
   const loanDate = date ? new Date(date) : new Date();
   if (isNaN(loanDate.getTime()))
@@ -133,7 +140,7 @@ export const createLoan = async (req: AuthRequest, res: Response) => {
             userId,
             personName: personName!.trim(),
             amount,
-            reason: reason!.trim(),
+            reason: normalizeLoanReason(reason),
             date: loanDate,
           },
         ],

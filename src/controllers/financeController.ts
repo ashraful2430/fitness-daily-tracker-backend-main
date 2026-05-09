@@ -58,6 +58,10 @@ function getAuthorizedUserId(
   return { userId: req.userId };
 }
 
+function normalizeOptionalText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 export const addBalance = async (req: AuthRequest, res: Response) => {
   const auth = getAuthorizedUserId(req);
   if ("error" in auth) {
@@ -338,11 +342,6 @@ export const addExpense = async (req: AuthRequest, res: Response) => {
       .status(400)
       .json({ success: false, message: "Expense category is required." });
   }
-  if (!note?.trim()) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Expense note is required." });
-  }
 
   const expenseDate = date ? new Date(date) : new Date();
   if (Number.isNaN(expenseDate.getTime())) {
@@ -367,7 +366,7 @@ export const addExpense = async (req: AuthRequest, res: Response) => {
       auth.userId,
       amount,
       normalizedCategory,
-      note,
+      normalizeOptionalText(note),
       expenseDate,
     );
 
@@ -457,11 +456,6 @@ export const updateExpenseEntry = async (req: AuthRequest, res: Response) => {
       .status(400)
       .json({ success: false, message: "Expense category is required." });
   }
-  if (!note?.trim()) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Expense note is required." });
-  }
 
   const expenseDate = date ? new Date(date) : new Date();
   if (Number.isNaN(expenseDate.getTime())) {
@@ -476,7 +470,7 @@ export const updateExpenseEntry = async (req: AuthRequest, res: Response) => {
       id,
       amount,
       normalizeCategoryName(category),
-      note,
+      normalizeOptionalText(note),
       expenseDate,
     );
     return res.status(200).json({
@@ -857,11 +851,6 @@ export const addIncome = async (req: AuthRequest, res: Response) => {
       .status(400)
       .json({ success: false, message: "Income source is required." });
   }
-  if (!note?.trim()) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Income note is required." });
-  }
 
   const incomeDate = date ? new Date(date) : new Date();
   if (Number.isNaN(incomeDate.getTime())) {
@@ -875,7 +864,7 @@ export const addIncome = async (req: AuthRequest, res: Response) => {
       auth.userId,
       amount,
       source.trim(),
-      note.trim(),
+      normalizeOptionalText(note),
       incomeDate,
     );
     return res.status(201).json({
@@ -915,11 +904,6 @@ export const addSavings = async (req: AuthRequest, res: Response) => {
       .status(400)
       .json({ success: false, message: "Savings source name is required." });
   }
-  if (!note?.trim()) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Savings note is required." });
-  }
 
   const savingsDate = date ? new Date(date) : new Date();
   if (Number.isNaN(savingsDate.getTime())) {
@@ -933,7 +917,7 @@ export const addSavings = async (req: AuthRequest, res: Response) => {
       auth.userId,
       amount,
       sourceName.trim(),
-      note.trim(),
+      normalizeOptionalText(note),
       savingsDate,
     );
     return res.status(201).json({

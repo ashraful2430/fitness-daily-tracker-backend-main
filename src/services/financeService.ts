@@ -108,6 +108,10 @@ function buildMonthYear(date: Date) {
   };
 }
 
+function normalizeOptionalText(value: string | null | undefined) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 export async function getBalanceSources(userId: string) {
   const [sources, balanceSummary] = await Promise.all([
     BalanceAccount.find({ userId }).sort({ type: 1, createdAt: -1 }),
@@ -258,7 +262,7 @@ export async function createExpense(
   userId: string,
   amount: number,
   category: string,
-  note: string,
+  note: string | null | undefined,
   date: Date,
 ) {
   if (amount <= 0) {
@@ -293,7 +297,7 @@ export async function createExpense(
             userId,
             amount,
             category: category.toLowerCase().trim(),
-            description: note.trim(),
+            description: normalizeOptionalText(note),
             date,
           },
         ],
@@ -393,7 +397,7 @@ export async function updateExpense(
   expenseId: string,
   amount: number,
   category: string,
-  note: string,
+  note: string | null | undefined,
   date: Date,
 ) {
   if (amount <= 0) {
@@ -497,7 +501,7 @@ export async function updateExpense(
 
       existingExpense.amount = amount;
       existingExpense.category = normalizedCategory;
-      existingExpense.description = note.trim();
+      existingExpense.description = normalizeOptionalText(note);
       existingExpense.date = date;
       await existingExpense.save({ session });
       updatedExpense = existingExpense;
@@ -1148,7 +1152,7 @@ export async function createIncomeRecord(
   userId: string,
   amount: number,
   source: string,
-  note: string,
+  note: string | null | undefined,
   date: Date,
 ) {
   if (amount <= 0) {
@@ -1161,7 +1165,7 @@ export async function createIncomeRecord(
     let income: any;
     await session.withTransaction(async () => {
       const docs = await Income.create(
-        [{ userId, amount, source, note, date }],
+        [{ userId, amount, source, note: normalizeOptionalText(note), date }],
         { session },
       );
       income = docs[0];
@@ -1197,7 +1201,7 @@ export async function createSavingsRecord(
   userId: string,
   amount: number,
   sourceName: string,
-  note: string,
+  note: string | null | undefined,
   date: Date,
 ) {
   if (amount <= 0) {
@@ -1210,7 +1214,15 @@ export async function createSavingsRecord(
     let savings: any;
     await session.withTransaction(async () => {
       const docs = await Savings.create(
-        [{ userId, amount, sourceName, note, date }],
+        [
+          {
+            userId,
+            amount,
+            sourceName,
+            note: normalizeOptionalText(note),
+            date,
+          },
+        ],
         { session },
       );
       savings = docs[0];
