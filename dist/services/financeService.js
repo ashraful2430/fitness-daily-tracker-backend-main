@@ -100,7 +100,9 @@ function normalizeOptionalText(value) {
 }
 async function getBalanceSources(userId) {
     const [sources, balanceSummary] = await Promise.all([
-        BalanceAccount_1.default.find({ userId }).sort({ type: 1, createdAt: -1 }).lean(),
+        BalanceAccount_1.default.find({ userId, source: { $ne: "EXPENSE_REFUND" } })
+            .sort({ type: 1, createdAt: -1 })
+            .lean(),
         BalanceAccount_1.default.aggregate([
             { $match: { userId } },
             { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
@@ -111,12 +113,13 @@ async function getBalanceSources(userId) {
         sources,
     };
 }
-async function creditBalanceEntry(userId, type, amount, session) {
+async function creditBalanceEntry(userId, type, amount, session, source = "USER_ADDED") {
     const account = await BalanceAccount_1.default.create([
         {
             userId,
             type,
             amount,
+            source,
         },
     ], { session });
     await TransactionLedger_1.default.create([
@@ -166,6 +169,7 @@ async function updateBalanceSource(id, amount) {
                         userId: existing.userId,
                         type: existing.type,
                         amount: delta,
+                        source: "BALANCE_ADJUSTMENT",
                     },
                 ], { session });
                 adjustment = created[0];
@@ -324,7 +328,7 @@ async function updateExpense(userId, expenseId, amount, category, note, date) {
                 await allocateAmountAcrossBalances(userId, amountDelta, session);
             }
             else if (amountDelta < 0) {
-                await creditBalanceEntry(userId, "CASH", -amountDelta, session);
+                await creditBalanceEntry(userId, "CASH", -amountDelta, session, "BALANCE_ADJUSTMENT");
                 await TransactionLedger_1.default.create([
                     {
                         userId,
@@ -398,7 +402,7 @@ async function deleteExpense(userId, expenseId) {
             if (!deletedExpense) {
                 throw new Error("Expense not found.");
             }
-            await creditBalanceEntry(userId, "CASH", deletedExpense.amount, session);
+            await creditBalanceEntry(userId, "CASH", deletedExpense.amount, session, "EXPENSE_REFUND");
             await TransactionLedger_1.default.create([
                 {
                     userId,
@@ -498,7 +502,7 @@ async function addSalary(userId, amount, date) {
                 ], { session });
                 salaryMonth = created[0];
             }
-            await creditBalanceEntry(userId, "SALARY", amount, session);
+            await creditBalanceEntry(userId, "SALARY", amount, session, "SALARY_ADDED");
             await TransactionLedger_1.default.create([
                 {
                     userId,
@@ -890,7 +894,7 @@ async function createIncomeRecord(userId, amount, source, note, date) {
         await session.withTransaction(async () => {
             const docs = await Income_1.default.create([{ userId, amount, source, note: normalizeOptionalText(note), date }], { session });
             income = docs[0];
-            await BalanceAccount_1.default.create([{ userId, type: "EXTERNAL", amount }], { session });
+            await BalanceAccount_1.default.create([{ userId, type: "EXTERNAL", amount, source: "INCOME_ADDED" }], { session });
             await TransactionLedger_1.default.create([
                 {
                     userId,
@@ -926,7 +930,7 @@ async function createSavingsRecord(userId, amount, sourceName, note, date) {
                 },
             ], { session });
             savings = docs[0];
-            await BalanceAccount_1.default.create([{ userId, type: "EXTERNAL", amount }], { session });
+            await BalanceAccount_1.default.create([{ userId, type: "EXTERNAL", amount, source: "SAVINGS_ADDED" }], { session });
             await TransactionLedger_1.default.create([
                 {
                     userId,
