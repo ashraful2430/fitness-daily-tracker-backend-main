@@ -11,6 +11,19 @@ const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const User_1 = __importDefault(require("../models/User"));
 const COOKIE_NAME = "token";
+const authMessages = {
+    registerMissingFields: "Name, email, and password are required. The signup form is not a guessing game.",
+    registerEmailTaken: "That email is already taken. Someone got here first, dramatically.",
+    registerSuccess: "Account created. Welcome aboard, productive chaos coordinator.",
+    registerFailed: "Registration tripped over its own shoelaces. Try again in a moment.",
+    loginMissingFields: "Email and password are required. Even the vault needs both halves of the spell.",
+    invalidCredentials: "Invalid email or password. The door looked at that combo and said absolutely not.",
+    loginSuccess: "Login successful. The dashboard missed your questionable decisions.",
+    loginFailed: "Login failed backstage. The server is fixing its posture.",
+    userNotFound: "User not found. Either the account vanished or it never made its grand entrance.",
+    meFailed: "Could not fetch your profile. The mirror is being difficult.",
+    logoutSuccess: "Logged out. Go touch grass, or at least pretend convincingly.",
+};
 function createToken(userId) {
     return jsonwebtoken_1.default.sign({ userId }, process.env.JWT_SECRET, {
         expiresIn: "7d",
@@ -90,14 +103,14 @@ async function register(req, res) {
         if (!name || !email || !password) {
             return res.status(400).json({
                 success: false,
-                message: "Name, email, and password are required.",
+                message: authMessages.registerMissingFields,
             });
         }
         const existingUser = await User_1.default.findOne({ email });
         if (existingUser) {
             return res.status(409).json({
                 success: false,
-                message: "User already exists.",
+                message: authMessages.registerEmailTaken,
             });
         }
         const hashedPassword = await bcryptjs_1.default.hash(password, 10);
@@ -114,14 +127,14 @@ async function register(req, res) {
         setAuthCookie(res, token);
         return res.status(201).json({
             success: true,
-            message: "Account created successfully.",
+            message: authMessages.registerSuccess,
             data: sanitizeUser(user),
         });
     }
     catch {
         return res.status(500).json({
             success: false,
-            message: "Registration failed.",
+            message: authMessages.registerFailed,
         });
     }
 }
@@ -131,21 +144,21 @@ async function login(req, res) {
         if (!email || !password) {
             return res.status(400).json({
                 success: false,
-                message: "Email and password are required.",
+                message: authMessages.loginMissingFields,
             });
         }
         const user = await User_1.default.findOne({ email });
         if (!user) {
             return res.status(401).json({
                 success: false,
-                message: "Invalid email or password.",
+                message: authMessages.invalidCredentials,
             });
         }
         const isPasswordValid = await bcryptjs_1.default.compare(password, user.password);
         if (!isPasswordValid) {
             return res.status(401).json({
                 success: false,
-                message: "Invalid email or password.",
+                message: authMessages.invalidCredentials,
             });
         }
         const updatedUser = await updateLoginStreak(user);
@@ -153,14 +166,14 @@ async function login(req, res) {
         setAuthCookie(res, token);
         return res.json({
             success: true,
-            message: "Login successful.",
+            message: authMessages.loginSuccess,
             data: sanitizeUser(updatedUser),
         });
     }
     catch {
         return res.status(500).json({
             success: false,
-            message: "Login failed.",
+            message: authMessages.loginFailed,
         });
     }
 }
@@ -170,7 +183,7 @@ async function me(req, res) {
         if (!user) {
             return res.status(404).json({
                 success: false,
-                message: "User not found.",
+                message: authMessages.userNotFound,
             });
         }
         return res.json({
@@ -181,7 +194,7 @@ async function me(req, res) {
     catch {
         return res.status(500).json({
             success: false,
-            message: "Unable to get user.",
+            message: authMessages.meFailed,
         });
     }
 }
@@ -189,7 +202,7 @@ async function logout(req, res) {
     clearAuthCookie(res);
     return res.json({
         success: true,
-        message: "Logged out successfully.",
+        message: authMessages.logoutSuccess,
         data: null,
     });
 }

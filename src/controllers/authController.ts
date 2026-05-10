@@ -6,6 +6,31 @@ import { AuthRequest } from "../middleware/authMiddleware";
 
 const COOKIE_NAME = "token";
 
+const authMessages = {
+  registerMissingFields:
+    "Name, email, and password are required. The signup form is not a guessing game.",
+  registerEmailTaken:
+    "That email is already taken. Someone got here first, dramatically.",
+  registerSuccess:
+    "Account created. Welcome aboard, productive chaos coordinator.",
+  registerFailed:
+    "Registration tripped over its own shoelaces. Try again in a moment.",
+  loginMissingFields:
+    "Email and password are required. Even the vault needs both halves of the spell.",
+  invalidCredentials:
+    "Invalid email or password. The door looked at that combo and said absolutely not.",
+  loginSuccess:
+    "Login successful. The dashboard missed your questionable decisions.",
+  loginFailed:
+    "Login failed backstage. The server is fixing its posture.",
+  userNotFound:
+    "User not found. Either the account vanished or it never made its grand entrance.",
+  meFailed:
+    "Could not fetch your profile. The mirror is being difficult.",
+  logoutSuccess:
+    "Logged out. Go touch grass, or at least pretend convincingly.",
+} as const;
+
 function createToken(userId: string) {
   return jwt.sign({ userId }, process.env.JWT_SECRET as string, {
     expiresIn: "7d",
@@ -106,7 +131,7 @@ export async function register(req: AuthRequest, res: Response) {
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
-        message: "Name, email, and password are required.",
+        message: authMessages.registerMissingFields,
       });
     }
 
@@ -115,7 +140,7 @@ export async function register(req: AuthRequest, res: Response) {
     if (existingUser) {
       return res.status(409).json({
         success: false,
-        message: "User already exists.",
+        message: authMessages.registerEmailTaken,
       });
     }
 
@@ -136,13 +161,13 @@ export async function register(req: AuthRequest, res: Response) {
 
     return res.status(201).json({
       success: true,
-      message: "Account created successfully.",
+      message: authMessages.registerSuccess,
       data: sanitizeUser(user),
     });
   } catch {
     return res.status(500).json({
       success: false,
-      message: "Registration failed.",
+      message: authMessages.registerFailed,
     });
   }
 }
@@ -154,7 +179,7 @@ export async function login(req: AuthRequest, res: Response) {
     if (!email || !password) {
       return res.status(400).json({
         success: false,
-        message: "Email and password are required.",
+        message: authMessages.loginMissingFields,
       });
     }
 
@@ -163,7 +188,7 @@ export async function login(req: AuthRequest, res: Response) {
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: "Invalid email or password.",
+        message: authMessages.invalidCredentials,
       });
     }
 
@@ -172,7 +197,7 @@ export async function login(req: AuthRequest, res: Response) {
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
-        message: "Invalid email or password.",
+        message: authMessages.invalidCredentials,
       });
     }
 
@@ -183,13 +208,13 @@ export async function login(req: AuthRequest, res: Response) {
 
     return res.json({
       success: true,
-      message: "Login successful.",
+      message: authMessages.loginSuccess,
       data: sanitizeUser(updatedUser),
     });
   } catch {
     return res.status(500).json({
       success: false,
-      message: "Login failed.",
+      message: authMessages.loginFailed,
     });
   }
 }
@@ -201,7 +226,7 @@ export async function me(req: AuthRequest, res: Response) {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found.",
+        message: authMessages.userNotFound,
       });
     }
 
@@ -212,7 +237,7 @@ export async function me(req: AuthRequest, res: Response) {
   } catch {
     return res.status(500).json({
       success: false,
-      message: "Unable to get user.",
+      message: authMessages.meFailed,
     });
   }
 }
@@ -222,7 +247,7 @@ export async function logout(req: AuthRequest, res: Response) {
 
   return res.json({
     success: true,
-    message: "Logged out successfully.",
+    message: authMessages.logoutSuccess,
     data: null,
   });
 }
