@@ -11,6 +11,9 @@ exports.TRANSACTION_SOURCES = [
     "SALARY_ADDED",
     "BALANCE_ADDED",
     "BALANCE_ADJUSTMENT",
+    "INCOME_ADDED",
+    "SAVINGS_ADDED",
+    "LOAN_RECEIVED",
 ];
 const transactionLedgerSchema = new mongoose_1.Schema({
     userId: {

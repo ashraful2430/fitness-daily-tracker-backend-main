@@ -19,7 +19,11 @@ exports.createLoan = createLoan;
 exports.repayLoan = repayLoan;
 exports.getLoans = getLoans;
 exports.getDebts = getDebts;
+exports.getInsights = getInsights;
+exports.getSummaryForMonth = getSummaryForMonth;
 exports.getSummary = getSummary;
+exports.createIncomeRecord = createIncomeRecord;
+exports.createSavingsRecord = createSavingsRecord;
 const mongoose_1 = __importDefault(require("mongoose"));
 const BalanceAccount_1 = __importDefault(require("../models/BalanceAccount"));
 const BalanceRecord_1 = __importDefault(require("../models/BalanceRecord"));
@@ -31,6 +35,8 @@ const SalaryMonth_1 = __importDefault(require("../models/SalaryMonth"));
 const Loan_1 = __importDefault(require("../models/Loan"));
 const LoanLedger_1 = __importDefault(require("../models/LoanLedger"));
 const ExternalDebt_1 = __importDefault(require("../models/ExternalDebt"));
+const Income_1 = __importDefault(require("../models/Income"));
+const Savings_1 = __importDefault(require("../models/Savings"));
 const BALANCE_SOURCE_PRIORITY = [
     "SALARY",
     "CASH",
@@ -89,9 +95,14 @@ function buildMonthYear(date) {
         year: date.getFullYear(),
     };
 }
+function normalizeOptionalText(value) {
+    return typeof value === "string" ? value.trim() : "";
+}
 async function getBalanceSources(userId) {
     const [sources, balanceSummary] = await Promise.all([
-        BalanceAccount_1.default.find({ userId }).sort({ type: 1, createdAt: -1 }),
+        BalanceAccount_1.default.find({ userId, source: { $ne: "EXPENSE_REFUND" } })
+            .sort({ type: 1, createdAt: -1 })
+            .lean(),
         BalanceAccount_1.default.aggregate([
             { $match: { userId } },
             { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
@@ -102,12 +113,13 @@ async function getBalanceSources(userId) {
         sources,
     };
 }
-async function creditBalanceEntry(userId, type, amount, session) {
+async function creditBalanceEntry(userId, type, amount, session, source = "USER_ADDED") {
     const account = await BalanceAccount_1.default.create([
         {
             userId,
             type,
             amount,
+            source,
         },
     ], { session });
     await TransactionLedger_1.default.create([
@@ -157,6 +169,7 @@ async function updateBalanceSource(id, amount) {
                         userId: existing.userId,
                         type: existing.type,
                         amount: delta,
+                        source: "BALANCE_ADJUSTMENT",
                     },
                 ], { session });
                 adjustment = created[0];
@@ -220,7 +233,7 @@ async function createExpense(userId, amount, category, note, date) {
                     userId,
                     amount,
                     category: category.toLowerCase().trim(),
-                    description: note.trim(),
+                    description: normalizeOptionalText(note),
                     date,
                 },
             ], { session });
@@ -315,7 +328,7 @@ async function updateExpense(userId, expenseId, amount, category, note, date) {
                 await allocateAmountAcrossBalances(userId, amountDelta, session);
             }
             else if (amountDelta < 0) {
-                await creditBalanceEntry(userId, "CASH", -amountDelta, session);
+                await creditBalanceEntry(userId, "CASH", -amountDelta, session, "BALANCE_ADJUSTMENT");
                 await TransactionLedger_1.default.create([
                     {
                         userId,
@@ -365,7 +378,7 @@ async function updateExpense(userId, expenseId, amount, category, note, date) {
             }
             existingExpense.amount = amount;
             existingExpense.category = normalizedCategory;
-            existingExpense.description = note.trim();
+            existingExpense.description = normalizeOptionalText(note);
             existingExpense.date = date;
             await existingExpense.save({ session });
             updatedExpense = existingExpense;
@@ -389,7 +402,7 @@ async function deleteExpense(userId, expenseId) {
             if (!deletedExpense) {
                 throw new Error("Expense not found.");
             }
-            await creditBalanceEntry(userId, "CASH", deletedExpense.amount, session);
+            await creditBalanceEntry(userId, "CASH", deletedExpense.amount, session, "EXPENSE_REFUND");
             await TransactionLedger_1.default.create([
                 {
                     userId,
@@ -489,7 +502,7 @@ async function addSalary(userId, amount, date) {
                 ], { session });
                 salaryMonth = created[0];
             }
-            await creditBalanceEntry(userId, "SALARY", amount, session);
+            await creditBalanceEntry(userId, "SALARY", amount, session, "SALARY_ADDED");
             await TransactionLedger_1.default.create([
                 {
                     userId,
@@ -529,7 +542,8 @@ async function getSalaryHistory(userId, page, limit) {
         SalaryMonth_1.default.find({ userId })
             .sort({ year: -1, month: -1 })
             .skip(skip)
-            .limit(limitNumber),
+            .limit(limitNumber)
+            .lean(),
         SalaryMonth_1.default.countDocuments({ userId }),
     ]);
     return {
@@ -692,7 +706,7 @@ async function getLoans(userId, filters) {
     const limit = filters.limit && filters.limit > 0 ? Math.min(filters.limit, 100) : 20;
     const skip = (page - 1) * limit;
     const [loans, total] = await Promise.all([
-        Loan_1.default.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
+        Loan_1.default.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
         Loan_1.default.countDocuments(query),
     ]);
     return {
@@ -706,8 +720,104 @@ async function getLoans(userId, filters) {
     };
 }
 async function getDebts(userId) {
-    const debts = await ExternalDebt_1.default.find({ userId }).sort({ updatedAt: -1 });
+    const debts = await ExternalDebt_1.default.find({ userId }).sort({ updatedAt: -1 }).lean();
     return debts;
+}
+async function getInsights(userId, year, month) {
+    const now = new Date();
+    const targetYear = year ?? now.getFullYear();
+    const targetMonth = month ?? now.getMonth() + 1;
+    const start = new Date(targetYear, targetMonth - 1, 1);
+    const end = new Date(targetYear, targetMonth, 1);
+    const breakdown = await Expense_1.default.aggregate([
+        { $match: { userId, date: { $gte: start, $lt: end } } },
+        {
+            $group: {
+                _id: "$category",
+                totalSpent: { $sum: "$amount" },
+                count: { $sum: 1 },
+            },
+        },
+        { $sort: { totalSpent: -1 } },
+    ]);
+    const totalSpent = breakdown.reduce((sum, item) => sum + item.totalSpent, 0);
+    const topCategories = breakdown.map((item) => ({
+        category: item._id,
+        categoryLabel: (0, financeUtils_1.formatCategoryLabel)(item._id),
+        totalSpent: item.totalSpent,
+        count: item.count,
+        percentage: totalSpent > 0
+            ? Math.round((item.totalSpent / totalSpent) * 10000) / 100
+            : 0,
+    }));
+    const mostSpentCategory = topCategories[0] ?? null;
+    return {
+        period: { month: targetMonth, year: targetYear },
+        totalSpent,
+        mostSpentCategory,
+        topCategories,
+    };
+}
+async function getSummaryForMonth(userId, month, year) {
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 1);
+    const [balanceStats, expenseStats, topCategoriesAgg, salaryRecord] = await Promise.all([
+        BalanceAccount_1.default.aggregate([
+            { $match: { userId } },
+            { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
+        ]),
+        Expense_1.default.aggregate([
+            { $match: { userId, date: { $gte: start, $lt: end } } },
+            {
+                $group: {
+                    _id: null,
+                    totalExpenses: { $sum: "$amount" },
+                    expenseCount: { $sum: 1 },
+                    averageExpense: { $avg: "$amount" },
+                },
+            },
+        ]),
+        Expense_1.default.aggregate([
+            { $match: { userId, date: { $gte: start, $lt: end } } },
+            {
+                $group: {
+                    _id: "$category",
+                    totalSpent: { $sum: "$amount" },
+                    count: { $sum: 1 },
+                },
+            },
+            { $sort: { totalSpent: -1 } },
+        ]),
+        SalaryMonth_1.default.findOne({
+            userId,
+            $or: [{ year: { $lt: year } }, { year, month: { $lte: month } }],
+        })
+            .sort({ year: -1, month: -1 })
+            .lean(),
+    ]);
+    const availableBalance = balanceStats[0]?.totalAmount ?? 0;
+    const totalExpenses = expenseStats[0]?.totalExpenses ?? 0;
+    const expenseCount = expenseStats[0]?.expenseCount ?? 0;
+    const averageExpense = Math.round((expenseStats[0]?.averageExpense ?? 0) * 100) / 100;
+    const salaryAmount = salaryRecord?.totalSalary ?? 0;
+    const currentMonthSpent = totalExpenses;
+    const remainingSalary = Math.max(salaryAmount - currentMonthSpent, 0);
+    const topCategories = topCategoriesAgg.map((item) => ({
+        category: item._id,
+        categoryLabel: (0, financeUtils_1.formatCategoryLabel)(item._id),
+        totalSpent: item.totalSpent,
+        count: item.count,
+    }));
+    return {
+        salaryAmount,
+        availableBalance,
+        totalExpenses,
+        expenseCount,
+        averageExpense,
+        currentMonthSpent,
+        remainingSalary,
+        topCategories,
+    };
 }
 async function getSummary(userId) {
     const now = new Date();
@@ -773,4 +883,68 @@ async function getSummary(userId) {
         currentMonthSpent,
         expenseCount: expenseStats[0]?.expenseCount ?? 0,
     };
+}
+async function createIncomeRecord(userId, amount, source, note, date) {
+    if (amount <= 0) {
+        throw new Error("Amount must be greater than zero.");
+    }
+    const session = await mongoose_1.default.startSession();
+    try {
+        let income;
+        await session.withTransaction(async () => {
+            const docs = await Income_1.default.create([{ userId, amount, source, note: normalizeOptionalText(note), date }], { session });
+            income = docs[0];
+            await BalanceAccount_1.default.create([{ userId, type: "EXTERNAL", amount, source: "INCOME_ADDED" }], { session });
+            await TransactionLedger_1.default.create([
+                {
+                    userId,
+                    type: "CREDIT",
+                    source: "INCOME_ADDED",
+                    amount,
+                    referenceId: income._id.toString(),
+                },
+            ], { session });
+            await recalculateTotalBalance(userId, session);
+        });
+        return income;
+    }
+    finally {
+        session.endSession();
+    }
+}
+async function createSavingsRecord(userId, amount, sourceName, note, date) {
+    if (amount <= 0) {
+        throw new Error("Amount must be greater than zero.");
+    }
+    const session = await mongoose_1.default.startSession();
+    try {
+        let savings;
+        await session.withTransaction(async () => {
+            const docs = await Savings_1.default.create([
+                {
+                    userId,
+                    amount,
+                    sourceName,
+                    note: normalizeOptionalText(note),
+                    date,
+                },
+            ], { session });
+            savings = docs[0];
+            await BalanceAccount_1.default.create([{ userId, type: "EXTERNAL", amount, source: "SAVINGS_ADDED" }], { session });
+            await TransactionLedger_1.default.create([
+                {
+                    userId,
+                    type: "CREDIT",
+                    source: "SAVINGS_ADDED",
+                    amount,
+                    referenceId: savings._id.toString(),
+                },
+            ], { session });
+            await recalculateTotalBalance(userId, session);
+        });
+        return savings;
+    }
+    finally {
+        session.endSession();
+    }
 }

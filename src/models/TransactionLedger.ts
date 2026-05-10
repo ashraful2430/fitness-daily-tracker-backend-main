@@ -11,6 +11,9 @@ export const TRANSACTION_SOURCES = [
   "SALARY_ADDED",
   "BALANCE_ADDED",
   "BALANCE_ADJUSTMENT",
+  "INCOME_ADDED",
+  "SAVINGS_ADDED",
+  "LOAN_RECEIVED",
 ] as const;
 export type TransactionSource = (typeof TRANSACTION_SOURCES)[number];
 

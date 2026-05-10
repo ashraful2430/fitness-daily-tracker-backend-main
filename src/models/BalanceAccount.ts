@@ -8,10 +8,22 @@ export const BALANCE_ACCOUNT_TYPES = [
 ] as const;
 export type BalanceAccountType = (typeof BALANCE_ACCOUNT_TYPES)[number];
 
+export const BALANCE_ACCOUNT_SOURCES = [
+  "USER_ADDED",
+  "BALANCE_ADJUSTMENT",
+  "EXPENSE_REFUND",
+  "INCOME_ADDED",
+  "SAVINGS_ADDED",
+  "SALARY_ADDED",
+  "LOAN_REPAID",
+] as const;
+export type BalanceAccountSource = (typeof BALANCE_ACCOUNT_SOURCES)[number];
+
 export interface IBalanceAccount {
   userId: string;
   type: BalanceAccountType;
   amount: number;
+  source: BalanceAccountSource;
 }
 
 const balanceAccountSchema = new Schema<IBalanceAccount>(
@@ -31,6 +43,13 @@ const balanceAccountSchema = new Schema<IBalanceAccount>(
     amount: {
       type: Number,
       required: true,
+    },
+    source: {
+      type: String,
+      required: true,
+      enum: BALANCE_ACCOUNT_SOURCES,
+      default: "USER_ADDED",
+      index: true,
     },
   },
   { timestamps: true },

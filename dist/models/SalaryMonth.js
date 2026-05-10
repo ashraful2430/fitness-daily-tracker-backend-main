@@ -41,4 +41,5 @@ const salaryMonthSchema = new mongoose_1.Schema({
     timestamps: true,
 });
 salaryMonthSchema.index({ userId: 1, year: 1, month: 1 }, { unique: true });
+salaryMonthSchema.index({ userId: 1, year: -1, month: -1 });
 exports.default = (0, mongoose_1.model)("SalaryMonth", salaryMonthSchema);

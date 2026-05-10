@@ -14,7 +14,7 @@ const expenseSchema = new mongoose_1.Schema({
     },
     description: {
         type: String,
-        required: true,
+        default: "",
         trim: true,
     },
     category: {
@@ -38,8 +38,10 @@ expenseSchema
     return this.description;
 })
     .set(function (value) {
-    this.description = value;
+    this.description = typeof value === "string" ? value : "";
 });
 expenseSchema.index({ userId: 1, date: -1 });
+expenseSchema.index({ userId: 1, date: -1, createdAt: -1 });
 expenseSchema.index({ userId: 1, category: 1 });
+expenseSchema.index({ userId: 1, category: 1, date: -1, createdAt: -1 });
 exports.default = (0, mongoose_1.model)("Expense", expenseSchema);

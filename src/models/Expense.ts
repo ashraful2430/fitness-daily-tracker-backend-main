@@ -3,7 +3,7 @@ import { Schema, model } from "mongoose";
 interface IExpense {
   userId: string;
   amount: number;
-  description: string;
+  description?: string;
   category: string;
   date: Date;
   note?: string;
@@ -23,7 +23,7 @@ const expenseSchema = new Schema<IExpense>(
     },
     description: {
       type: String,
-      required: true,
+      default: "",
       trim: true,
     },
     category: {
@@ -49,11 +49,13 @@ expenseSchema
   .get(function (this: IExpense) {
     return this.description;
   })
-  .set(function (this: IExpense, value: string) {
-    this.description = value;
+  .set(function (this: IExpense, value?: string | null) {
+    this.description = typeof value === "string" ? value : "";
   });
 
 expenseSchema.index({ userId: 1, date: -1 });
+expenseSchema.index({ userId: 1, date: -1, createdAt: -1 });
 expenseSchema.index({ userId: 1, category: 1 });
+expenseSchema.index({ userId: 1, category: 1, date: -1, createdAt: -1 });
 
 export default model<IExpense>("Expense", expenseSchema);

@@ -14,14 +14,23 @@ const dashboardRoutes_1 = __importDefault(require("./routes/dashboardRoutes"));
 const scoreSectionRoutes_1 = __importDefault(require("./routes/scoreSectionRoutes"));
 const moneyRoutes_1 = __importDefault(require("./routes/moneyRoutes"));
 const learningRoutes_1 = __importDefault(require("./routes/learningRoutes"));
+const loanRoutes_1 = __importDefault(require("./routes/loanRoutes"));
+const lendingRoutes_1 = __importDefault(require("./routes/lendingRoutes"));
+const financeRoutes_1 = __importDefault(require("./routes/financeRoutes"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 // Trust proxy for secure cookies when running behind a reverse proxy / cloud provider
 app.set("trust proxy", 1);
 const allowedOrigins = [
     "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
     "https://fitness-daily-tracker.vercel.app",
-];
+    process.env.FRONTEND_URL,
+].filter(Boolean);
 app.use((0, cors_1.default)({
     origin(origin, callback) {
         if (!origin || allowedOrigins.includes(origin)) {
@@ -42,6 +51,9 @@ app.use("/api/dashboard", dashboardRoutes_1.default);
 app.use("/api/score-sections", scoreSectionRoutes_1.default);
 app.use("/api/money", moneyRoutes_1.default);
 app.use("/api/learning", learningRoutes_1.default);
+app.use("/api/loans", loanRoutes_1.default);
+app.use("/api/lending", lendingRoutes_1.default);
+app.use("/api/finance", financeRoutes_1.default);
 app.get("/health", (req, res) => {
     res.json({
         status: "ok",

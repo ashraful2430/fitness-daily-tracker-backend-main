@@ -70,6 +70,24 @@ function parseStatus(value) {
         data: value,
     };
 }
+function parseOptionalText(value, fieldName) {
+    if (value === undefined || value === null) {
+        return {
+            success: true,
+            data: undefined,
+        };
+    }
+    if (typeof value !== "string") {
+        return {
+            success: false,
+            message: `${fieldName} must be a string when provided.`,
+        };
+    }
+    return {
+        success: true,
+        data: value.trim(),
+    };
+}
 function validateCreateLearningSession(body) {
     if (!body || typeof body !== "object") {
         return {
@@ -80,7 +98,10 @@ function validateCreateLearningSession(body) {
     const payload = body;
     const title = typeof payload.title === "string" ? payload.title.trim() : "";
     const subject = typeof payload.subject === "string" ? payload.subject.trim() : "";
-    const notes = typeof payload.notes === "string" ? payload.notes.trim() : undefined;
+    const notes = parseOptionalText(payload.notes, "notes");
+    if (!notes.success) {
+        return notes;
+    }
     const date = typeof payload.date === "string" ? payload.date.trim() : "";
     if (!title) {
         return { success: false, message: "title is required." };
@@ -136,7 +157,7 @@ function validateCreateLearningSession(body) {
             plannedMinutes: plannedMinutes.data,
             actualMinutes,
             status,
-            notes,
+            notes: notes.data,
             date,
             startedAt: startedAt.value,
             completedAt: completedAt.value,

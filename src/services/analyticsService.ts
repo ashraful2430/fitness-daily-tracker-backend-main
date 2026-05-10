@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import DailyAnalytics from "../models/DailyAnalytics";
 
 function startOfDay(date: Date) {
@@ -104,11 +105,39 @@ export async function updateDailyAnalytics(
 }
 
 export async function getAnalyticsInsights(userId: string) {
-  const allAnalytics = await DailyAnalytics.find({ userId }).sort({
-    date: -1,
-  });
+  const objectUserId = new mongoose.Types.ObjectId(userId);
 
-  if (!allAnalytics.length) {
+  const [summaryAgg, recentAnalytics] = await Promise.all([
+    DailyAnalytics.aggregate([
+      { $match: { userId: objectUserId } },
+      {
+        $group: {
+          _id: null,
+          totalDays: { $sum: 1 },
+          perfectDays: {
+            $sum: {
+              $cond: ["$perfectDay", 1, 0],
+            },
+          },
+          missedDays: {
+            $sum: {
+              $cond: [{ $eq: ["$score", 0] }, 1, 0],
+            },
+          },
+          bestScore: { $max: "$score" },
+        },
+      },
+    ]),
+    DailyAnalytics.find({ userId: objectUserId })
+      .sort({ date: -1 })
+      .limit(14)
+      .select("score")
+      .lean(),
+  ]);
+
+  const summary = summaryAgg[0];
+
+  if (!summary) {
     return {
       perfectDays: 0,
       missedDays: 0,
@@ -118,14 +147,8 @@ export async function getAnalyticsInsights(userId: string) {
     };
   }
 
-  const perfectDays = allAnalytics.filter((day) => day.perfectDay).length;
-
-  const missedDays = allAnalytics.filter((day) => day.score === 0).length;
-
-  const bestScore = Math.max(...allAnalytics.map((day) => day.score));
-
-  const last7Days = allAnalytics.slice(0, 7);
-  const previous7Days = allAnalytics.slice(7, 14);
+  const last7Days = recentAnalytics.slice(0, 7);
+  const previous7Days = recentAnalytics.slice(7, 14);
 
   const weeklyAverageScore = last7Days.length
     ? Math.round(
@@ -147,9 +170,9 @@ export async function getAnalyticsInsights(userId: string) {
   }
 
   return {
-    perfectDays,
-    missedDays,
-    bestScore,
+    perfectDays: summary.perfectDays,
+    missedDays: summary.missedDays,
+    bestScore: summary.bestScore ?? 0,
     weeklyAverageScore,
     productivityTrend,
   };

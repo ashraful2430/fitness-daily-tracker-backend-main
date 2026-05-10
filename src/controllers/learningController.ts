@@ -12,6 +12,7 @@ import {
   validateLearningSessionListQuery,
   validateUpdateLearningSession,
 } from "../validation/learningValidation";
+import { errorMessage, successMessage } from "../utils/apiMessages";
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Server error";
@@ -29,7 +30,7 @@ export async function createLearningSession(req: AuthRequest, res: Response) {
   const userId = getUserId(req);
 
   if (!userId) {
-    return res.status(401).json({ success: false, message: "Unauthorized" });
+    return res.status(401).json({ success: false, message: errorMessage("unauthorized") });
   }
 
   const validation = validateCreateLearningSession(req.body);
@@ -49,6 +50,7 @@ export async function createLearningSession(req: AuthRequest, res: Response) {
 
     return res.status(201).json({
       success: true,
+      message: successMessage("created", "learning-session-created"),
       data: result.data,
     });
   } catch (error: unknown) {
@@ -63,7 +65,7 @@ export async function updateLearningSession(req: AuthRequest, res: Response) {
   const userId = getUserId(req);
 
   if (!userId) {
-    return res.status(401).json({ success: false, message: "Unauthorized" });
+    return res.status(401).json({ success: false, message: errorMessage("unauthorized") });
   }
 
   const validation = validateUpdateLearningSession(req.body);
@@ -95,6 +97,7 @@ export async function updateLearningSession(req: AuthRequest, res: Response) {
 
     return res.status(200).json({
       success: true,
+      message: successMessage("updated", "learning-session-updated"),
       data: result.data,
     });
   } catch (error: unknown) {
@@ -109,7 +112,7 @@ export async function deleteLearningSession(req: AuthRequest, res: Response) {
   const userId = getUserId(req);
 
   if (!userId) {
-    return res.status(401).json({ success: false, message: "Unauthorized" });
+    return res.status(401).json({ success: false, message: errorMessage("unauthorized") });
   }
 
   const sessionId = getRouteId(req);
@@ -132,6 +135,7 @@ export async function deleteLearningSession(req: AuthRequest, res: Response) {
 
     return res.status(200).json({
       success: true,
+      message: successMessage("deleted", "learning-session-deleted"),
       data: result.data,
     });
   } catch (error: unknown) {
@@ -146,7 +150,7 @@ export async function getLearningSessions(req: AuthRequest, res: Response) {
   const userId = getUserId(req);
 
   if (!userId) {
-    return res.status(401).json({ success: false, message: "Unauthorized" });
+    return res.status(401).json({ success: false, message: errorMessage("unauthorized") });
   }
 
   const validation = validateLearningSessionListQuery(
@@ -176,7 +180,7 @@ export async function getLearningSummary(req: AuthRequest, res: Response) {
   const userId = getUserId(req);
 
   if (!userId) {
-    return res.status(401).json({ success: false, message: "Unauthorized" });
+    return res.status(401).json({ success: false, message: errorMessage("unauthorized") });
   }
 
   try {

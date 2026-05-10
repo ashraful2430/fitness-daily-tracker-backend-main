@@ -9,6 +9,9 @@ import dashboardRoutes from "./routes/dashboardRoutes";
 import scoreSectionRoutes from "./routes/scoreSectionRoutes";
 import moneyRoutes from "./routes/moneyRoutes";
 import learningRoutes from "./routes/learningRoutes";
+import loanRoutes from "./routes/loanRoutes";
+import lendingRoutes from "./routes/lendingRoutes";
+import financeRoutes from "./routes/financeRoutes";
 
 dotenv.config();
 
@@ -19,8 +22,14 @@ app.set("trust proxy", 1);
 
 const allowedOrigins = [
   "http://localhost:3000",
+  "http://localhost:3001",
+  "http://localhost:3002",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
+  "http://127.0.0.1:3002",
   "https://fitness-daily-tracker.vercel.app",
-];
+  process.env.FRONTEND_URL,
+].filter(Boolean);
 
 app.use(
   cors({
@@ -47,6 +56,9 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/score-sections", scoreSectionRoutes);
 app.use("/api/money", moneyRoutes);
 app.use("/api/learning", learningRoutes);
+app.use("/api/loans", loanRoutes);
+app.use("/api/lending", lendingRoutes);
+app.use("/api/finance", financeRoutes);
 
 app.get("/health", (req, res) => {
   res.json({

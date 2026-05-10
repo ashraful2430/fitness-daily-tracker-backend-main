@@ -1,5 +1,8 @@
 import mongoose, { ClientSession } from "mongoose";
-import BalanceAccount, { BalanceAccountType } from "../models/BalanceAccount";
+import BalanceAccount, {
+  BalanceAccountSource,
+  BalanceAccountType,
+} from "../models/BalanceAccount";
 import BalanceRecord from "../models/BalanceRecord";
 import Category from "../models/Category";
 import TransactionLedger, {
@@ -15,6 +18,8 @@ import SalaryMonth from "../models/SalaryMonth";
 import Loan, { LoanSourceType, LoanStatusType } from "../models/Loan";
 import LoanLedger from "../models/LoanLedger";
 import ExternalDebt from "../models/ExternalDebt";
+import Income from "../models/Income";
+import Savings from "../models/Savings";
 
 const BALANCE_SOURCE_PRIORITY: BalanceAccountType[] = [
   "SALARY",
@@ -106,9 +111,15 @@ function buildMonthYear(date: Date) {
   };
 }
 
+function normalizeOptionalText(value: string | null | undefined) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 export async function getBalanceSources(userId: string) {
   const [sources, balanceSummary] = await Promise.all([
-    BalanceAccount.find({ userId }).sort({ type: 1, createdAt: -1 }),
+    BalanceAccount.find({ userId, source: { $ne: "EXPENSE_REFUND" } })
+      .sort({ type: 1, createdAt: -1 })
+      .lean(),
     BalanceAccount.aggregate([
       { $match: { userId } },
       { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
@@ -126,6 +137,7 @@ async function creditBalanceEntry(
   type: BalanceAccountType,
   amount: number,
   session: ClientSession,
+  source: BalanceAccountSource = "USER_ADDED",
 ) {
   const account = await BalanceAccount.create(
     [
@@ -133,6 +145,7 @@ async function creditBalanceEntry(
         userId,
         type,
         amount,
+        source,
       },
     ],
     { session },
@@ -201,6 +214,7 @@ export async function updateBalanceSource(id: string, amount: number) {
               userId: existing.userId,
               type: existing.type,
               amount: delta,
+              source: "BALANCE_ADJUSTMENT",
             },
           ],
           { session },
@@ -256,7 +270,7 @@ export async function createExpense(
   userId: string,
   amount: number,
   category: string,
-  note: string,
+  note: string | null | undefined,
   date: Date,
 ) {
   if (amount <= 0) {
@@ -291,7 +305,7 @@ export async function createExpense(
             userId,
             amount,
             category: category.toLowerCase().trim(),
-            description: note.trim(),
+            description: normalizeOptionalText(note),
             date,
           },
         ],
@@ -391,7 +405,7 @@ export async function updateExpense(
   expenseId: string,
   amount: number,
   category: string,
-  note: string,
+  note: string | null | undefined,
   date: Date,
 ) {
   if (amount <= 0) {
@@ -425,7 +439,13 @@ export async function updateExpense(
       if (amountDelta > 0) {
         await allocateAmountAcrossBalances(userId, amountDelta, session);
       } else if (amountDelta < 0) {
-        await creditBalanceEntry(userId, "CASH", -amountDelta, session);
+        await creditBalanceEntry(
+          userId,
+          "CASH",
+          -amountDelta,
+          session,
+          "BALANCE_ADJUSTMENT",
+        );
         await TransactionLedger.create(
           [
             {
@@ -495,7 +515,7 @@ export async function updateExpense(
 
       existingExpense.amount = amount;
       existingExpense.category = normalizedCategory;
-      existingExpense.description = note.trim();
+      existingExpense.description = normalizeOptionalText(note);
       existingExpense.date = date;
       await existingExpense.save({ session });
       updatedExpense = existingExpense;
@@ -524,7 +544,13 @@ export async function deleteExpense(userId: string, expenseId: string) {
         throw new Error("Expense not found.");
       }
 
-      await creditBalanceEntry(userId, "CASH", deletedExpense.amount, session);
+      await creditBalanceEntry(
+        userId,
+        "CASH",
+        deletedExpense.amount,
+        session,
+        "EXPENSE_REFUND",
+      );
       await TransactionLedger.create(
         [
           {
@@ -653,7 +679,7 @@ export async function addSalary(userId: string, amount: number, date: Date) {
         salaryMonth = created[0];
       }
 
-      await creditBalanceEntry(userId, "SALARY", amount, session);
+      await creditBalanceEntry(userId, "SALARY", amount, session, "SALARY_ADDED");
 
       await TransactionLedger.create(
         [
@@ -706,7 +732,8 @@ export async function getSalaryHistory(
     SalaryMonth.find({ userId })
       .sort({ year: -1, month: -1 })
       .skip(skip)
-      .limit(limitNumber),
+      .limit(limitNumber)
+      .lean(),
     SalaryMonth.countDocuments({ userId }),
   ]);
 
@@ -934,7 +961,7 @@ export async function getLoans(
   const skip = (page - 1) * limit;
 
   const [loans, total] = await Promise.all([
-    Loan.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Loan.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     Loan.countDocuments(query),
   ]);
 
@@ -950,7 +977,7 @@ export async function getLoans(
 }
 
 export async function getDebts(userId: string) {
-  const debts = await ExternalDebt.find({ userId }).sort({ updatedAt: -1 });
+  const debts = await ExternalDebt.find({ userId }).sort({ updatedAt: -1 }).lean();
   return debts;
 }
 
@@ -1040,7 +1067,9 @@ export async function getSummaryForMonth(
       SalaryMonth.findOne({
         userId,
         $or: [{ year: { $lt: year } }, { year, month: { $lte: month } }],
-      }).sort({ year: -1, month: -1 }),
+      })
+        .sort({ year: -1, month: -1 })
+        .lean(),
     ]);
 
   const availableBalance = balanceStats[0]?.totalAmount ?? 0;
@@ -1140,4 +1169,110 @@ export async function getSummary(userId: string) {
     currentMonthSpent,
     expenseCount: expenseStats[0]?.expenseCount ?? 0,
   };
+}
+
+export async function createIncomeRecord(
+  userId: string,
+  amount: number,
+  source: string,
+  note: string | null | undefined,
+  date: Date,
+) {
+  if (amount <= 0) {
+    throw new Error("Amount must be greater than zero.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let income: any;
+    await session.withTransaction(async () => {
+      const docs = await Income.create(
+        [{ userId, amount, source, note: normalizeOptionalText(note), date }],
+        { session },
+      );
+      income = docs[0];
+
+      await BalanceAccount.create(
+        [{ userId, type: "EXTERNAL", amount, source: "INCOME_ADDED" }],
+        { session },
+      );
+
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "CREDIT",
+            source: "INCOME_ADDED",
+            amount,
+            referenceId: income._id.toString(),
+          },
+        ],
+        { session },
+      );
+
+      await recalculateTotalBalance(userId, session);
+    });
+
+    return income;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function createSavingsRecord(
+  userId: string,
+  amount: number,
+  sourceName: string,
+  note: string | null | undefined,
+  date: Date,
+) {
+  if (amount <= 0) {
+    throw new Error("Amount must be greater than zero.");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let savings: any;
+    await session.withTransaction(async () => {
+      const docs = await Savings.create(
+        [
+          {
+            userId,
+            amount,
+            sourceName,
+            note: normalizeOptionalText(note),
+            date,
+          },
+        ],
+        { session },
+      );
+      savings = docs[0];
+
+      await BalanceAccount.create(
+        [{ userId, type: "EXTERNAL", amount, source: "SAVINGS_ADDED" }],
+        { session },
+      );
+
+      await TransactionLedger.create(
+        [
+          {
+            userId,
+            type: "CREDIT",
+            source: "SAVINGS_ADDED",
+            amount,
+            referenceId: savings._id.toString(),
+          },
+        ],
+        { session },
+      );
+
+      await recalculateTotalBalance(userId, session);
+    });
+
+    return savings;
+  } finally {
+    session.endSession();
+  }
 }
