@@ -27,7 +27,10 @@ function sendError(
   message: string,
   field?: string,
 ) {
-  const body: { message: string; field?: string } = { message };
+  const body: { success: false; message: string; field?: string } = {
+    success: false,
+    message,
+  };
   if (field) body.field = field;
   return res.status(status).json(body);
 }
@@ -316,10 +319,19 @@ export const createLending = async (req: AuthRequest, res: Response) => {
   const userId = req.userId;
   if (!userId) return sendError(res, 401, errorMessage("unauthorized"));
 
-  const { personName, amount, fundingSource, date } = req.body as {
+  const {
+    personName,
+    amount,
+    fundingSource,
+    borrowedFromName,
+    borrowReason,
+    date,
+  } = req.body as {
     personName?: string;
     amount?: number;
     fundingSource?: string;
+    borrowedFromName?: string;
+    borrowReason?: string;
     date?: string;
   };
 
@@ -334,6 +346,10 @@ export const createLending = async (req: AuthRequest, res: Response) => {
       "fundingSource must be PERSONAL or BORROWED",
       "fundingSource",
     );
+  if (fundingSource === "BORROWED" && !borrowedFromName?.trim())
+    return sendError(res, 400, "borrowedFromName is required.", "borrowedFromName");
+  if (fundingSource === "BORROWED" && !borrowReason?.trim())
+    return sendError(res, 400, "borrowReason is required.", "borrowReason");
 
   const lendingDate = date ? new Date(date) : new Date();
   if (isNaN(lendingDate.getTime()))
@@ -349,7 +365,7 @@ export const createLending = async (req: AuthRequest, res: Response) => {
         if (amount > available) {
           throw new ApiError(
             400,
-            `Insufficient balance. Available: ${available}. Wallet said sit down.`,
+            "You do not have enough balance to lend this amount.",
             "amount",
           );
         }
@@ -370,14 +386,13 @@ export const createLending = async (req: AuthRequest, res: Response) => {
         );
         lending = docs[0];
       } else {
-        // BORROWED: auto-create a Loan record to track the debt
         const loanDocs = await LoanDebt.create(
           [
             {
               userId,
-              personName: `Borrowed to lend to ${personName!.trim()}`,
+              personName: borrowedFromName!.trim(),
               amount,
-              reason: `Borrowed funds to lend to ${personName!.trim()}`,
+              reason: borrowReason!.trim(),
               date: lendingDate,
               status: "ACTIVE",
             },
@@ -401,7 +416,6 @@ export const createLending = async (req: AuthRequest, res: Response) => {
         );
         lending = lendingDocs[0];
 
-        // Back-link the auto-loan to the lending
         await LoanDebt.findOneAndUpdate(
           { _id: autoLoan._id },
           { linkedLendingId: lending._id.toString() },
@@ -468,20 +482,6 @@ export const repayLending = async (req: AuthRequest, res: Response) => {
         lending.status = "PARTIALLY_REPAID";
       }
       await lending.save({ session });
-
-      if (fullyRepaid) {
-        if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
-          const linkedLoan = await LoanDebt.findOne({
-            _id: lending.linkedLoanId,
-            userId,
-          }).session(session);
-          if (linkedLoan) {
-            linkedLoan.paidAmount = linkedLoan.amount;
-            linkedLoan.status = "PAID";
-            await linkedLoan.save({ session });
-          }
-        }
-      }
 
       if (lending.fundingSource === "PERSONAL") {
         await creditCashBalance(userId, amount, session);

@@ -105,6 +105,20 @@ describe("Canonical finance summary formulas", () => {
     assert.strictEqual(summary.breakdown.borrowedLendingLoans.principal, 700);
   });
 
+  it("finance summary does not add borrowed lending debt twice", () => {
+    const summary = buildCanonicalFinanceSummary(base({
+      directLoans: { principal: 100, repaid: 0 },
+      borrowedLendingLoans: { principal: 700, repaid: 200 },
+      borrowedLending: { principal: 700, repaid: 200 },
+    }));
+
+    assert.strictEqual(summary.activeLoans, 100);
+    assert.strictEqual(summary.borrowedLending, 500);
+    assert.strictEqual(summary.lendingOutstanding, 500);
+    assert.strictEqual(summary.loanDebt, 600);
+    assert.notStrictEqual(summary.loanDebt, 1100);
+  });
+
   it("BORROWED lending partial repayment reduces linked debt", () => {
     const summary = buildCanonicalFinanceSummary(base({
       borrowedLendingLoans: { principal: 700, repaid: 250 },
