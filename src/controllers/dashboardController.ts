@@ -7,82 +7,45 @@ import {
   WeeklyGoal,
 } from "../models/DashboardData";
 import Workout from "../models/Workout";
+import WeeklyStats from "../models/WeeklyStats";
 import { getAnalyticsInsights } from "../services/analyticsService";
-import WeeklyStats from "../models/WeeklyStats"; // Import the WeeklyStats model
 
-// ─── GET /api/dashboard ───────────────────────────────────────────────────────
+type AuthedRequest = Request & { userId?: string };
+
 export const getDashboardData = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = (req as AuthedRequest).userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
 
-    const today = getStartOfDay(new Date());
-    const weekStart = getStartOfWeek(today);
+    const now = new Date();
+    const today = getStartOfDay(now);
+    const weekStart = getStartOfWeek(now);
 
-    const [
-      workoutStreak,
-      waterIntake,
-      focusSession,
-      weeklyGoal,
-      recentWorkouts,
-      weeklyStats,
-      analyticsInsights,
-    ] = await Promise.all([
-      WorkoutStreak.findOne({ userId }).lean(),
+    const [streak, water, focus, weekGoal] = await Promise.all([
+      ensureWorkoutStreak(userId),
+      ensureWaterIntake(userId, today),
+      ensureFocusSession(userId, today),
+      ensureWeeklyGoal(userId, weekStart),
+    ]);
 
-      WaterIntake.findOne({ userId, date: today }).lean(),
+    await ensureWeeklyStatsDoc(userId, weekStart);
 
-      FocusSession.findOne({ userId, date: today }).lean(),
-
-      WeeklyGoal.findOne({ userId, weekStart }).lean(),
-
+    const [recentWorkouts, weeklyStats, analytics] = await Promise.all([
       Workout.find({ userId })
         .sort({ createdAt: -1 })
         .limit(5)
         .select("exercise duration calories createdAt")
         .lean(),
-
-      getWeeklyStatsOptimized(userId),
-
+      getWeeklyStatsOptimized(userId, now),
       getAnalyticsInsights(userId),
     ]);
 
-    const streak =
-      workoutStreak ??
-      (await WorkoutStreak.create({
-        userId,
-        currentStreak: 0,
-        longestStreak: 0,
-      }));
-
-    const water =
-      waterIntake ??
-      (await WaterIntake.create({
-        userId,
-        date: today,
-        glassesConsumed: 0,
-        goalGlasses: 8,
-      }));
-
-    const focus =
-      focusSession ??
-      (await FocusSession.create({
-        userId,
-        date: today,
-        totalMinutes: 0,
-        sessions: [],
-      }));
-
-    const weekGoal =
-      weeklyGoal ??
-      (await WeeklyGoal.create({
-        userId,
-        weekStart,
-        totalWorkouts: 0,
-        completedWorkouts: 0,
-        goalWorkouts: 5,
-        progressPercentage: 0,
-      }));
-
+    const waterPercentage = calculatePercentage(
+      water.glassesConsumed,
+      water.goalGlasses,
+    );
     const todayScore = calculateTodayScore(water, focus, streak, weekGoal);
 
     return res.status(200).json({
@@ -92,353 +55,500 @@ export const getDashboardData = async (req: Request, res: Response) => {
           current: streak.currentStreak,
           longest: streak.longestStreak,
         },
-
         waterIntake: {
           consumed: water.glassesConsumed,
           goal: water.goalGlasses,
-          percentage: Math.round(
-            (water.glassesConsumed / water.goalGlasses) * 100,
-          ),
+          percentage: waterPercentage,
         },
-
         focusTime: {
           minutes: focus.totalMinutes,
           hours: Math.floor(focus.totalMinutes / 60),
           sessionsCount: focus.sessions?.length ?? 0,
         },
-
         weeklyGoal: {
           completed: weekGoal.completedWorkouts,
           goal: weekGoal.goalWorkouts,
           percentage: weekGoal.progressPercentage,
         },
-
         todayScore,
-
         recentWorkouts,
-
         weeklyStats,
-
-        analytics: analyticsInsights,
+        analytics,
       },
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Server error";
-
-    return res.status(500).json({
-      success: false,
-      message,
-    });
+    return res.status(500).json({ success: false, message });
   }
 };
 
-// ─── GET /api/dashboard/weekly-stats ────────────────────────────────────────────────
 export const getWeeklyStats = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    const weeklyStats = await getWeeklyStatsOptimized(userId);
+    const userId = (req as AuthedRequest).userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
 
-    return res.status(200).json({
-      success: true,
-      data: weeklyStats,
-    });
+    const now = new Date();
+    const weekStart = getStartOfWeek(now);
+    await ensureWeeklyStatsDoc(userId, weekStart);
+
+    const weeklyStats = await getWeeklyStatsOptimized(userId, now);
+    return res.status(200).json({ success: true, data: weeklyStats });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Server error";
-    return res.status(500).json({
-      success: false,
-      message,
-    });
+    return res.status(500).json({ success: false, message });
   }
 };
 
-// ─── POST /api/dashboard/weekly-stats ────────────────────────────────────────────────
 export const updateWeeklyStats = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    const { dailyStats } = req.body; // Expecting an array of daily stats
+    const userId = (req as AuthedRequest).userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
 
-    const weekStart = getStartOfWeek(new Date());
-
-    let totalWorkouts = 0;
-    let totalFocusMinutes = 0;
-
-    // Aggregate the workouts and focus minutes from the daily stats
-    dailyStats.forEach((stat: { workouts: number; focusMinutes: number }) => {
-      totalWorkouts += stat.workouts;
-      totalFocusMinutes += stat.focusMinutes;
-    });
-
-    const weeklyStats = await WeeklyStats.findOneAndUpdate(
-      { userId, weekStart },
-      { dailyStats, workouts: totalWorkouts, focusMinutes: totalFocusMinutes },
-      { new: true, upsert: true },
-    ).lean();
-
-    return res.status(200).json({
-      success: true,
-      data: weeklyStats,
-    });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Server error";
-    return res.status(500).json({
-      success: false,
-      message,
-    });
-  }
-};
-
-// ─── POST /api/dashboard/water ────────────────────────────────────────────────
-export const updateWaterIntake = async (req: Request, res: Response) => {
-  try {
-    const userId = (req as any).userId;
-    const { glassesConsumed } = req.body as {
-      glassesConsumed: number;
+    const { dailyStats } = req.body as {
+      dailyStats?: Array<{ workouts: number; focusMinutes: number }>;
     };
 
-    const today = getStartOfDay(new Date());
+    if (!Array.isArray(dailyStats) || dailyStats.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "dailyStats must be a non-empty array",
+        field: "dailyStats",
+      });
+    }
 
-    const waterIntake = await WaterIntake.findOneAndUpdate(
-      { userId, date: today },
-      { glassesConsumed },
+    const hasInvalidItem = dailyStats.some(
+      (stat) =>
+        typeof stat?.workouts !== "number" ||
+        stat.workouts < 0 ||
+        typeof stat?.focusMinutes !== "number" ||
+        stat.focusMinutes < 0,
+    );
+
+    if (hasInvalidItem) {
+      return res.status(400).json({
+        success: false,
+        message: "Each dailyStats item must contain non-negative workouts and focusMinutes",
+        field: "dailyStats",
+      });
+    }
+
+    const now = new Date();
+    const weekStart = getStartOfWeek(now);
+
+    const normalizedDailyStats = buildDailyStatsFromInput(weekStart, dailyStats);
+    const totals = normalizedDailyStats.reduce(
+      (acc, day) => {
+        acc.workouts += day.workouts;
+        acc.focusMinutes += day.focusMinutes;
+        return acc;
+      },
+      { workouts: 0, focusMinutes: 0 },
+    );
+
+    const weeklyStatsDoc = await WeeklyStats.findOneAndUpdate(
+      { userId, weekStart },
+      {
+        userId,
+        weekStart,
+        dailyStats: normalizedDailyStats,
+        workouts: totals.workouts,
+        focusMinutes: totals.focusMinutes,
+      },
       {
         new: true,
         upsert: true,
+        setDefaultsOnInsert: true,
       },
     ).lean();
 
-    return res.status(200).json({
-      success: true,
-      data: waterIntake,
-    });
+    return res.status(200).json({ success: true, data: weeklyStatsDoc });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Server error";
-
-    return res.status(500).json({
-      success: false,
-      message,
-    });
+    return res.status(500).json({ success: false, message });
   }
 };
 
-// ─── POST /api/dashboard/focus ────────────────────────────────────────────────
+export const updateWaterIntake = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as AuthedRequest).userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const { glassesConsumed } = req.body as { glassesConsumed?: number };
+    if (typeof glassesConsumed !== "number" || glassesConsumed < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "glassesConsumed must be a non-negative number",
+        field: "glassesConsumed",
+      });
+    }
+
+    const today = getStartOfDay(new Date());
+    const existing = await WaterIntake.findOne({ userId, date: today }).lean();
+    const goalGlasses = existing?.goalGlasses ?? 8;
+
+    const waterDoc = await WaterIntake.findOneAndUpdate(
+      { userId, date: today },
+      { userId, date: today, glassesConsumed, goalGlasses },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    ).lean();
+
+    if (!waterDoc) {
+      return res.status(500).json({ success: false, message: "Server error" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...waterDoc,
+        percentage: calculatePercentage(
+          waterDoc.glassesConsumed,
+          waterDoc.goalGlasses,
+        ),
+      },
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Server error";
+    return res.status(500).json({ success: false, message });
+  }
+};
+
 export const logFocusSession = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = (req as AuthedRequest).userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
 
     const { startTime, endTime, category } = req.body as {
-      startTime: string;
-      endTime: string;
-      category: string;
+      startTime?: string;
+      endTime?: string;
+      category?: string;
     };
+
+    if (!startTime) {
+      return res.status(400).json({
+        success: false,
+        message: "startTime is required",
+        field: "startTime",
+      });
+    }
+    if (!endTime) {
+      return res.status(400).json({
+        success: false,
+        message: "endTime is required",
+        field: "endTime",
+      });
+    }
+    if (!category || !category.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "category is required",
+        field: "category",
+      });
+    }
 
     const start = new Date(startTime);
     const end = new Date(endTime);
+    if (Number.isNaN(start.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "startTime must be a valid ISO date string",
+        field: "startTime",
+      });
+    }
+    if (Number.isNaN(end.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "endTime must be a valid ISO date string",
+        field: "endTime",
+      });
+    }
+    if (end <= start) {
+      return res.status(400).json({
+        success: false,
+        message: "endTime must be after startTime",
+        field: "endTime",
+      });
+    }
 
     const duration = Math.round((end.getTime() - start.getTime()) / 60000);
-
     const today = getStartOfDay(new Date());
 
-    const focusSession = await FocusSession.findOneAndUpdate(
+    const focusDoc = await FocusSession.findOneAndUpdate(
       { userId, date: today },
       {
+        $setOnInsert: { userId, date: today, totalMinutes: 0, sessions: [] },
         $push: {
           sessions: {
             startTime: start,
             endTime: end,
             duration,
-            category,
+            category: category.trim(),
           },
         },
-        $inc: {
-          totalMinutes: duration,
-        },
+        $inc: { totalMinutes: duration },
       },
-      {
-        new: true,
-        upsert: true,
-      },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
     ).lean();
 
-    return res.status(200).json({
-      success: true,
-      data: focusSession,
-    });
+    return res.status(200).json({ success: true, data: focusDoc });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Server error";
-
-    return res.status(500).json({
-      success: false,
-      message,
-    });
+    return res.status(500).json({ success: false, message });
   }
 };
 
-// ─── POST /api/dashboard/weekly-goal ─────────────────────────────────────────
 export const updateWeeklyGoal = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = (req as AuthedRequest).userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
 
     const { completedWorkouts, goalWorkouts } = req.body as {
-      completedWorkouts: number;
-      goalWorkouts: number;
+      completedWorkouts?: number;
+      goalWorkouts?: number;
     };
 
-    const weekStart = getStartOfWeek(new Date());
+    if (
+      typeof completedWorkouts !== "number" ||
+      completedWorkouts < 0 ||
+      typeof goalWorkouts !== "number" ||
+      goalWorkouts <= 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "completedWorkouts must be non-negative and goalWorkouts must be greater than 0",
+        field: "completedWorkouts",
+      });
+    }
 
-    const progressPercentage = Math.round(
-      (completedWorkouts / goalWorkouts) * 100,
+    const weekStart = getStartOfWeek(new Date());
+    const progressPercentage = calculatePercentage(
+      completedWorkouts,
+      goalWorkouts,
     );
 
-    const weeklyGoal = await WeeklyGoal.findOneAndUpdate(
+    const weeklyGoalDoc = await WeeklyGoal.findOneAndUpdate(
       { userId, weekStart },
       {
+        userId,
+        weekStart,
         completedWorkouts,
         goalWorkouts,
         progressPercentage,
       },
-      {
-        new: true,
-        upsert: true,
-      },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
     ).lean();
 
-    return res.status(200).json({
-      success: true,
-      data: weeklyGoal,
-    });
+    return res.status(200).json({ success: true, data: weeklyGoalDoc });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Server error";
-
-    return res.status(500).json({
-      success: false,
-      message,
-    });
+    return res.status(500).json({ success: false, message });
   }
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 function getStartOfDay(date: Date) {
-  const normalized = new Date(date);
-  normalized.setHours(0, 0, 0, 0);
-  return normalized;
+  const value = new Date(date);
+  value.setHours(0, 0, 0, 0);
+  return value;
 }
 
+// Week starts on Sunday in server local timezone.
 function getStartOfWeek(date: Date) {
   const weekStart = getStartOfDay(date);
   weekStart.setDate(weekStart.getDate() - weekStart.getDay());
   return weekStart;
 }
 
+function calculatePercentage(part: number, total: number) {
+  if (!total || total <= 0) {
+    return 0;
+  }
+  return Math.min(Math.round((part / total) * 100), 100);
+}
+
 const SECTION_COUNT = 4;
 const PTS = 100 / SECTION_COUNT;
 
 function calculateTodayScore(
-  water: any,
-  focus: any,
-  streak: any,
-  weekGoal?: any,
-): number {
+  water: { glassesConsumed: number; goalGlasses: number },
+  focus: { totalMinutes: number },
+  streak: { currentStreak: number },
+  weekGoal: { progressPercentage: number },
+) {
   const waterScore =
-    Math.min(water.glassesConsumed / water.goalGlasses, 1) * PTS;
-
+    Math.min(water.glassesConsumed / Math.max(water.goalGlasses, 1), 1) * PTS;
   const focusScore = Math.min(focus.totalMinutes / 120, 1) * PTS;
-
   const streakScore = streak.currentStreak > 0 ? PTS : 0;
+  const weeklyScore = Math.min(weekGoal.progressPercentage / 100, 1) * PTS;
 
-  const weeklyScore = weekGoal
-    ? Math.min(weekGoal.progressPercentage / 100, 1) * PTS
-    : 0;
-
-  return Math.min(
-    Math.round(waterScore + focusScore + streakScore + weeklyScore),
-    100,
-  );
+  return Math.min(Math.round(waterScore + focusScore + streakScore + weeklyScore), 100);
 }
 
-// ─── Weekly Stats Optimized ───────────────────────────────────────────────────
-async function getWeeklyStatsOptimized(userId: string) {
-  const objectUserId = new mongoose.Types.ObjectId(userId);
-  const weekStart = getStartOfWeek(new Date());
+function buildWeekDays(now: Date) {
+  const weekStart = getStartOfWeek(now);
+  const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-  const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-  const days = Array.from({ length: 7 }, (_, i) => {
+  return Array.from({ length: 7 }, (_, index) => {
     const date = new Date(weekStart);
-
-    date.setDate(weekStart.getDate() + i);
-
+    date.setDate(weekStart.getDate() + index);
     return {
-      dateStr: date.toISOString().split("T")[0],
-      day: DAY_LABELS[date.getDay()],
+      date,
+      dateKey: date.toISOString().split("T")[0],
+      day: dayLabels[date.getDay()],
       start: new Date(date),
       end: new Date(date.getTime() + 24 * 60 * 60 * 1000),
     };
   });
+}
+
+async function getWeeklyStatsOptimized(userId: string, now: Date) {
+  const objectUserId = new mongoose.Types.ObjectId(userId);
+  const days = buildWeekDays(now);
+  const weekStart = days[0].start;
+  const weekEnd = days[6].end;
 
   const [workoutAgg, focusAgg] = await Promise.all([
     Workout.aggregate([
       {
         $match: {
           userId: objectUserId,
-          createdAt: {
-            $gte: weekStart,
-            $lt: days[6].end,
-          },
+          createdAt: { $gte: weekStart, $lt: weekEnd },
         },
       },
       {
         $group: {
           _id: {
-            $dateToString: {
-              format: "%Y-%m-%d",
-              date: "$createdAt",
-            },
+            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
           },
-          count: {
-            $sum: 1,
-          },
+          count: { $sum: 1 },
         },
       },
     ]),
-
     FocusSession.aggregate([
       {
         $match: {
           userId: objectUserId,
-          date: {
-            $gte: weekStart,
-            $lt: days[6].end,
-          },
+          date: { $gte: weekStart, $lt: weekEnd },
         },
       },
       {
         $group: {
           _id: {
-            $dateToString: {
-              format: "%Y-%m-%d",
-              date: "$date",
-            },
+            $dateToString: { format: "%Y-%m-%d", date: "$date" },
           },
-          totalMinutes: {
-            $sum: "$totalMinutes",
-          },
+          totalMinutes: { $sum: "$totalMinutes" },
         },
       },
     ]),
   ]);
 
-  const workoutMap = Object.fromEntries(
-    workoutAgg.map((w) => [w._id, w.count]),
-  );
-
+  const workoutMap = Object.fromEntries(workoutAgg.map((item) => [item._id, item.count]));
   const focusMap = Object.fromEntries(
-    focusAgg.map((f) => [f._id, f.totalMinutes]),
+    focusAgg.map((item) => [item._id, item.totalMinutes]),
   );
 
-  return days.map(({ dateStr, day }) => ({
-    date: dateStr,
-    day,
-    workouts: workoutMap[dateStr] ?? 0,
-    focusMinutes: focusMap[dateStr] ?? 0,
+  return days.map((day) => ({
+    date: day.dateKey,
+    day: day.day,
+    workouts: workoutMap[day.dateKey] ?? 0,
+    focusMinutes: focusMap[day.dateKey] ?? 0,
   }));
+}
+
+async function ensureWorkoutStreak(userId: string) {
+  const existing = await WorkoutStreak.findOne({ userId }).lean();
+  if (existing) {
+    return existing;
+  }
+  return WorkoutStreak.create({
+    userId,
+    currentStreak: 0,
+    longestStreak: 0,
+  });
+}
+
+async function ensureWaterIntake(userId: string, date: Date) {
+  const existing = await WaterIntake.findOne({ userId, date }).lean();
+  if (existing) {
+    return existing;
+  }
+  return WaterIntake.create({
+    userId,
+    date,
+    glassesConsumed: 0,
+    goalGlasses: 8,
+  });
+}
+
+async function ensureFocusSession(userId: string, date: Date) {
+  const existing = await FocusSession.findOne({ userId, date }).lean();
+  if (existing) {
+    return existing;
+  }
+  return FocusSession.create({
+    userId,
+    date,
+    totalMinutes: 0,
+    sessions: [],
+  });
+}
+
+async function ensureWeeklyGoal(userId: string, weekStart: Date) {
+  const existing = await WeeklyGoal.findOne({ userId, weekStart }).lean();
+  if (existing) {
+    return existing;
+  }
+  return WeeklyGoal.create({
+    userId,
+    weekStart,
+    completedWorkouts: 0,
+    goalWorkouts: 5,
+    progressPercentage: 0,
+    totalWorkouts: 0,
+  });
+}
+
+function buildDailyStatsFromInput(
+  weekStart: Date,
+  dailyStats: Array<{ workouts: number; focusMinutes: number }>,
+) {
+  return dailyStats.slice(0, 7).map((stat, index) => {
+    const date = new Date(weekStart);
+    date.setDate(weekStart.getDate() + index);
+    return {
+      date,
+      workouts: stat.workouts,
+      focusMinutes: stat.focusMinutes,
+    };
+  });
+}
+
+async function ensureWeeklyStatsDoc(userId: string, weekStart: Date) {
+  const existing = await WeeklyStats.findOne({ userId, weekStart }).lean();
+  if (existing) {
+    return existing;
+  }
+
+  const dailyStats = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(weekStart);
+    date.setDate(weekStart.getDate() + index);
+    return { date, workouts: 0, focusMinutes: 0 };
+  });
+
+  return WeeklyStats.create({
+    userId,
+    weekStart,
+    workouts: 0,
+    focusMinutes: 0,
+    dailyStats,
+  });
 }

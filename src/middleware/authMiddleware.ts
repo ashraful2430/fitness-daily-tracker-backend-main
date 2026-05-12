@@ -13,7 +13,7 @@ export function authMiddleware(
   const token = req.cookies?.token;
 
   if (!token) {
-    return res.status(401).json({ message: "Unauthorized" });
+    return res.status(401).json({ success: false, message: "Unauthorized" });
   }
 
   try {
@@ -34,6 +34,6 @@ export function authMiddleware(
       path: "/",
     });
 
-    return res.status(401).json({ message: "Invalid or expired token" });
+    return res.status(401).json({ success: false, message: "Unauthorized" });
   }
 }

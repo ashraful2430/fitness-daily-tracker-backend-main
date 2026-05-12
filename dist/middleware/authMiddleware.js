@@ -8,7 +8,7 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 function authMiddleware(req, res, next) {
     const token = req.cookies?.token;
     if (!token) {
-        return res.status(401).json({ message: "Unauthorized" });
+        return res.status(401).json({ success: false, message: "Unauthorized" });
     }
     try {
         const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
@@ -23,6 +23,6 @@ function authMiddleware(req, res, next) {
             sameSite: isProduction ? "none" : "lax",
             path: "/",
         });
-        return res.status(401).json({ message: "Invalid or expired token" });
+        return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 }
