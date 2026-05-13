@@ -11,6 +11,7 @@ const Loan = require("../dist/models/Loan").default;
 const Lending = require("../dist/models/Lending").default;
 const ScoreSection = require("../dist/models/ScoreSection").ScoreSection;
 const financeSummaryService = require("../dist/services/canonicalFinanceSummaryService");
+const monthlyIncomeService = require("../dist/services/monthlyIncomeService");
 
 const originals = [];
 function patch(target, key, value) {
@@ -65,6 +66,11 @@ function installZeroDataStubs() {
   patch(Lending, "countDocuments", async () => 0);
   patch(ScoreSection, "find", () => chainableLean([]));
   patch(financeSummaryService, "getCanonicalFinanceSummary", async () => ({ availableBalance: 0 }));
+  patch(monthlyIncomeService, "getMonthlyIncomeOrDefault", async () => ({
+    salaryIncome: 0,
+    externalIncome: 0,
+    totalIncome: 0,
+  }));
 }
 
 describe("dashboard controller upgrades", () => {
@@ -124,7 +130,11 @@ describe("dashboard controller upgrades", () => {
 
   it("GET /api/dashboard/monthly-overview defaults to current month and handles specific month/year", async () => {
     installZeroDataStubs();
-    patch(Income, "aggregate", async () => [{ _id: null, total: 200 }]);
+    patch(monthlyIncomeService, "getMonthlyIncomeOrDefault", async () => ({
+      salaryIncome: 150,
+      externalIncome: 50,
+      totalIncome: 200,
+    }));
     patch(Expense, "aggregate", async () => [{ _id: null, total: 100 }]);
     patch(Workout, "aggregate", async () => [{ _id: null, total: 10 }]);
     patch(dashboardModels.FocusSession, "aggregate", async () => [{ _id: null, total: 500 }]);

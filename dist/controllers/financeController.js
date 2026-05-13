@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.addSavings = exports.addIncome = exports.getFinanceInsights = exports.getFinanceSummary = exports.getDebtList = exports.getLoanList = exports.repayLoanEntry = exports.createLoanEntry = exports.getSalaryHistoryList = exports.getCurrentSalary = exports.addSalaryEntry = exports.getMonthlyExpenseSummary = exports.deleteExpenseEntry = exports.updateExpenseEntry = exports.getExpensesList = exports.addExpense = exports.deleteCategory = exports.getCategories = exports.createCategory = exports.getBalance = exports.deleteBalance = exports.updateBalance = exports.addBalance = void 0;
+exports.getMonthlyIncomeHistory = exports.getMonthlyIncome = exports.addSavings = exports.addIncome = exports.getFinanceInsights = exports.getFinanceSummary = exports.getDebtList = exports.getLoanList = exports.repayLoanEntry = exports.createLoanEntry = exports.getSalaryHistoryList = exports.getCurrentSalary = exports.addSalaryEntry = exports.getMonthlyExpenseSummary = exports.deleteExpenseEntry = exports.updateExpenseEntry = exports.getExpensesList = exports.addExpense = exports.deleteCategory = exports.getCategories = exports.createCategory = exports.getBalance = exports.deleteBalance = exports.updateBalance = exports.addBalance = void 0;
 const Category_1 = __importDefault(require("../models/Category"));
 const Expense_1 = __importDefault(require("../models/Expense"));
 const BalanceAccount_1 = require("../models/BalanceAccount");
@@ -784,3 +784,78 @@ const addSavings = async (req, res) => {
     }
 };
 exports.addSavings = addSavings;
+const getMonthlyIncome = async (req, res) => {
+    const auth = getAuthorizedUserId(req);
+    if ("error" in auth) {
+        return res
+            .status(auth.status)
+            .json({ success: false, message: auth.error });
+    }
+    const now = new Date();
+    const month = req.query.month ? Number(req.query.month) : now.getMonth() + 1;
+    const year = req.query.year ? Number(req.query.year) : now.getFullYear();
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({
+            success: false,
+            message: "month must be an integer between 1 and 12",
+            field: "month",
+        });
+    }
+    if (!Number.isInteger(year) || year < 1900 || year > 9999) {
+        return res.status(400).json({
+            success: false,
+            message: "year must be a valid YYYY value",
+            field: "year",
+        });
+    }
+    try {
+        const row = await (0, financeService_1.getMonthlyIncomeSummary)(auth.userId, year, month);
+        return res.status(200).json({
+            success: true,
+            data: {
+                month,
+                year,
+                salaryIncome: row.salaryIncome ?? 0,
+                externalIncome: row.externalIncome ?? 0,
+                totalIncome: row.totalIncome ?? 0,
+            },
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: getErrorMessage(error),
+        });
+    }
+};
+exports.getMonthlyIncome = getMonthlyIncome;
+const getMonthlyIncomeHistory = async (req, res) => {
+    const auth = getAuthorizedUserId(req);
+    if ("error" in auth) {
+        return res
+            .status(auth.status)
+            .json({ success: false, message: auth.error });
+    }
+    const limit = req.query.limit ? Number(req.query.limit) : 12;
+    if (!Number.isInteger(limit) || limit <= 0 || limit > 24) {
+        return res.status(400).json({
+            success: false,
+            message: "limit must be an integer between 1 and 24",
+            field: "limit",
+        });
+    }
+    try {
+        const rows = await (0, financeService_1.getMonthlyIncomeSummaryHistory)(auth.userId, limit);
+        return res.status(200).json({
+            success: true,
+            data: rows,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: getErrorMessage(error),
+        });
+    }
+};
+exports.getMonthlyIncomeHistory = getMonthlyIncomeHistory;

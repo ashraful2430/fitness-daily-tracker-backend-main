@@ -11,6 +11,7 @@ import Lending from "../models/Lending";
 import { ScoreSection } from "../models/ScoreSection";
 import { getCanonicalFinanceSummary } from "../services/canonicalFinanceSummaryService";
 import { computeDailyProgress } from "../services/dashboardProgressService";
+import { getMonthlyIncomeOrDefault } from "../services/monthlyIncomeService";
 
 type AuthedRequest = Request & { userId?: string };
 const SERVER_TIMEZONE = "Asia/Dhaka";
@@ -586,11 +587,13 @@ async function getWeeklyStatsRows(userId: string, now: Date) {
 }
 
 async function getMonthlyMoney(userId: string, start: Date, end: Date) {
-  const [incomeAgg, expenseAgg] = await Promise.all([
-    Income.aggregate([{ $match: { userId, date: { $gte: start, $lt: end } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]),
+  const year = start.getFullYear();
+  const month = start.getMonth() + 1;
+  const [monthlyIncome, expenseAgg] = await Promise.all([
+    getMonthlyIncomeOrDefault(userId, year, month),
     Expense.aggregate([{ $match: { userId, date: { $gte: start, $lt: end } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]),
   ]);
-  return { income: incomeAgg[0]?.total ?? 0, expense: expenseAgg[0]?.total ?? 0 };
+  return { income: monthlyIncome.totalIncome ?? 0, expense: expenseAgg[0]?.total ?? 0 };
 }
 
 async function getMonthlyProductivity(userId: string, start: Date, end: Date) {

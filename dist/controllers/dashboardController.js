@@ -16,6 +16,7 @@ const Lending_1 = __importDefault(require("../models/Lending"));
 const ScoreSection_1 = require("../models/ScoreSection");
 const canonicalFinanceSummaryService_1 = require("../services/canonicalFinanceSummaryService");
 const dashboardProgressService_1 = require("../services/dashboardProgressService");
+const monthlyIncomeService_1 = require("../services/monthlyIncomeService");
 const SERVER_TIMEZONE = "Asia/Dhaka";
 const getDashboardData = async (req, res) => {
     try {
@@ -516,11 +517,13 @@ async function getWeeklyStatsRows(userId, now) {
     }));
 }
 async function getMonthlyMoney(userId, start, end) {
-    const [incomeAgg, expenseAgg] = await Promise.all([
-        Income_1.default.aggregate([{ $match: { userId, date: { $gte: start, $lt: end } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]),
+    const year = start.getFullYear();
+    const month = start.getMonth() + 1;
+    const [monthlyIncome, expenseAgg] = await Promise.all([
+        (0, monthlyIncomeService_1.getMonthlyIncomeOrDefault)(userId, year, month),
         Expense_1.default.aggregate([{ $match: { userId, date: { $gte: start, $lt: end } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]),
     ]);
-    return { income: incomeAgg[0]?.total ?? 0, expense: expenseAgg[0]?.total ?? 0 };
+    return { income: monthlyIncome.totalIncome ?? 0, expense: expenseAgg[0]?.total ?? 0 };
 }
 async function getMonthlyProductivity(userId, start, end) {
     const objectUserId = new mongoose_1.default.Types.ObjectId(userId);

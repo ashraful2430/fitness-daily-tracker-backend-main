@@ -23,6 +23,8 @@ exports.getInsights = getInsights;
 exports.getSummaryForMonth = getSummaryForMonth;
 exports.getSummary = getSummary;
 exports.createIncomeRecord = createIncomeRecord;
+exports.getMonthlyIncomeSummary = getMonthlyIncomeSummary;
+exports.getMonthlyIncomeSummaryHistory = getMonthlyIncomeSummaryHistory;
 exports.createSavingsRecord = createSavingsRecord;
 const mongoose_1 = __importDefault(require("mongoose"));
 const BalanceAccount_1 = __importDefault(require("../models/BalanceAccount"));
@@ -37,6 +39,7 @@ const LoanLedger_1 = __importDefault(require("../models/LoanLedger"));
 const ExternalDebt_1 = __importDefault(require("../models/ExternalDebt"));
 const Income_1 = __importDefault(require("../models/Income"));
 const Savings_1 = __importDefault(require("../models/Savings"));
+const monthlyIncomeService_1 = require("./monthlyIncomeService");
 const BALANCE_SOURCE_PRIORITY = [
     "SALARY",
     "CASH",
@@ -513,6 +516,8 @@ async function addSalary(userId, amount, date) {
                 },
             ], { session });
         });
+        const key = (0, monthlyIncomeService_1.getMonthKey)(date);
+        await (0, monthlyIncomeService_1.recomputeMonthlyIncome)(userId, key.year, key.month);
         return salaryMonth;
     }
     finally {
@@ -761,7 +766,7 @@ async function getInsights(userId, year, month) {
 async function getSummaryForMonth(userId, month, year) {
     const start = new Date(year, month - 1, 1);
     const end = new Date(year, month, 1);
-    const [balanceStats, expenseStats, topCategoriesAgg, salaryRecord] = await Promise.all([
+    const [balanceStats, expenseStats, topCategoriesAgg, salaryRecord, monthlyIncome] = await Promise.all([
         BalanceAccount_1.default.aggregate([
             { $match: { userId } },
             { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
@@ -794,6 +799,7 @@ async function getSummaryForMonth(userId, month, year) {
         })
             .sort({ year: -1, month: -1 })
             .lean(),
+        (0, monthlyIncomeService_1.getMonthlyIncomeOrDefault)(userId, year, month),
     ]);
     const availableBalance = balanceStats[0]?.totalAmount ?? 0;
     const totalExpenses = expenseStats[0]?.totalExpenses ?? 0;
@@ -809,6 +815,9 @@ async function getSummaryForMonth(userId, month, year) {
         count: item.count,
     }));
     return {
+        salaryIncome: monthlyIncome.salaryIncome ?? 0,
+        externalIncome: monthlyIncome.externalIncome ?? 0,
+        totalIncome: monthlyIncome.totalIncome ?? 0,
         salaryAmount,
         availableBalance,
         totalExpenses,
@@ -823,7 +832,8 @@ async function getSummary(userId) {
     const now = new Date();
     const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    const [balanceStats, expenseStats, currentMonthStats, loanStats, totalDebt] = await Promise.all([
+    const currentMonth = buildMonthYear(now);
+    const [balanceStats, expenseStats, currentMonthStats, loanStats, totalDebt, monthlyIncome,] = await Promise.all([
         BalanceAccount_1.default.aggregate([
             { $match: { userId } },
             { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
@@ -866,6 +876,7 @@ async function getSummary(userId) {
             { $match: { userId } },
             { $group: { _id: null, totalDebt: { $sum: "$remainingAmount" } } },
         ]),
+        (0, monthlyIncomeService_1.getMonthlyIncomeOrDefault)(userId, currentMonth.year, currentMonth.month),
     ]);
     const totalBalance = balanceStats[0]?.totalAmount ?? 0;
     const totalExpenses = expenseStats[0]?.totalExpenses ?? 0;
@@ -874,6 +885,9 @@ async function getSummary(userId) {
     const totalLoansGiven = loanStats[0]?.totalLoans ?? 0;
     const totalExternalDebt = totalDebt[0]?.totalDebt ?? 0;
     return {
+        salaryIncome: monthlyIncome.salaryIncome ?? 0,
+        externalIncome: monthlyIncome.externalIncome ?? 0,
+        totalIncome: monthlyIncome.totalIncome ?? 0,
         totalBalance,
         totalExpenses,
         totalLoansGiven,
@@ -906,11 +920,30 @@ async function createIncomeRecord(userId, amount, source, note, date) {
             ], { session });
             await recalculateTotalBalance(userId, session);
         });
+        const key = (0, monthlyIncomeService_1.getMonthKey)(date);
+        await (0, monthlyIncomeService_1.recomputeMonthlyIncome)(userId, key.year, key.month);
         return income;
     }
     finally {
         session.endSession();
     }
+}
+async function getMonthlyIncomeSummary(userId, year, month) {
+    return (0, monthlyIncomeService_1.getMonthlyIncomeOrDefault)(userId, year, month);
+}
+async function getMonthlyIncomeSummaryHistory(userId, limit = 12) {
+    const rows = await (0, monthlyIncomeService_1.getMonthlyIncomeHistory)(userId, limit);
+    return rows.map((row) => ({
+        month: row.month,
+        year: row.year,
+        label: new Intl.DateTimeFormat("en-US", {
+            month: "short",
+            year: "numeric",
+        }).format(new Date(row.year, row.month - 1, 1)),
+        salaryIncome: row.salaryIncome ?? 0,
+        externalIncome: row.externalIncome ?? 0,
+        totalIncome: row.totalIncome ?? 0,
+    }));
 }
 async function createSavingsRecord(userId, amount, sourceName, note, date) {
     if (amount <= 0) {

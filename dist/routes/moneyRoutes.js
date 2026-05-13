@@ -29,6 +29,8 @@ router.get("/loans", financeController_1.getLoanList);
 router.get("/debts", financeController_1.getDebtList);
 router.post("/income", financeController_1.addIncome);
 router.post("/savings", financeController_1.addSavings);
+router.get("/monthly-income", financeController_1.getMonthlyIncome);
+router.get("/monthly-income/history", financeController_1.getMonthlyIncomeHistory);
 router.get("/summary", financeController_1.getFinanceSummary);
 router.get("/insights", financeController_1.getFinanceInsights);
 exports.default = router;

@@ -26,6 +26,8 @@ import {
   getInsights as fetchInsights,
   createIncomeRecord,
   createSavingsRecord,
+  getMonthlyIncomeSummary,
+  getMonthlyIncomeSummaryHistory,
 } from "../services/financeService";
 import { getCanonicalFinanceSummary } from "../services/canonicalFinanceSummaryService";
 import {
@@ -939,5 +941,86 @@ export const addSavings = async (req: AuthRequest, res: Response) => {
     return res
       .status(400)
       .json({ success: false, message: getErrorMessage(error) });
+  }
+};
+
+export const getMonthlyIncome = async (req: AuthRequest, res: Response) => {
+  const auth = getAuthorizedUserId(req);
+  if ("error" in auth) {
+    return res
+      .status(auth.status)
+      .json({ success: false, message: auth.error });
+  }
+
+  const now = new Date();
+  const month = req.query.month ? Number(req.query.month) : now.getMonth() + 1;
+  const year = req.query.year ? Number(req.query.year) : now.getFullYear();
+
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    return res.status(400).json({
+      success: false,
+      message: "month must be an integer between 1 and 12",
+      field: "month",
+    });
+  }
+  if (!Number.isInteger(year) || year < 1900 || year > 9999) {
+    return res.status(400).json({
+      success: false,
+      message: "year must be a valid YYYY value",
+      field: "year",
+    });
+  }
+
+  try {
+    const row = await getMonthlyIncomeSummary(auth.userId, year, month);
+    return res.status(200).json({
+      success: true,
+      data: {
+        month,
+        year,
+        salaryIncome: row.salaryIncome ?? 0,
+        externalIncome: row.externalIncome ?? 0,
+        totalIncome: row.totalIncome ?? 0,
+      },
+    });
+  } catch (error: unknown) {
+    return res.status(500).json({
+      success: false,
+      message: getErrorMessage(error),
+    });
+  }
+};
+
+export const getMonthlyIncomeHistory = async (
+  req: AuthRequest,
+  res: Response,
+) => {
+  const auth = getAuthorizedUserId(req);
+  if ("error" in auth) {
+    return res
+      .status(auth.status)
+      .json({ success: false, message: auth.error });
+  }
+
+  const limit = req.query.limit ? Number(req.query.limit) : 12;
+  if (!Number.isInteger(limit) || limit <= 0 || limit > 24) {
+    return res.status(400).json({
+      success: false,
+      message: "limit must be an integer between 1 and 24",
+      field: "limit",
+    });
+  }
+
+  try {
+    const rows = await getMonthlyIncomeSummaryHistory(auth.userId, limit);
+    return res.status(200).json({
+      success: true,
+      data: rows,
+    });
+  } catch (error: unknown) {
+    return res.status(500).json({
+      success: false,
+      message: getErrorMessage(error),
+    });
   }
 };
