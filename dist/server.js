@@ -17,6 +17,7 @@ const learningRoutes_1 = __importDefault(require("./routes/learningRoutes"));
 const loanRoutes_1 = __importDefault(require("./routes/loanRoutes"));
 const lendingRoutes_1 = __importDefault(require("./routes/lendingRoutes"));
 const financeRoutes_1 = __importDefault(require("./routes/financeRoutes"));
+const adminRoutes_1 = __importDefault(require("./routes/adminRoutes"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 // Trust proxy for secure cookies when running behind a reverse proxy / cloud provider
@@ -54,6 +55,7 @@ app.use("/api/learning", learningRoutes_1.default);
 app.use("/api/loans", loanRoutes_1.default);
 app.use("/api/lending", lendingRoutes_1.default);
 app.use("/api/finance", financeRoutes_1.default);
+app.use("/api/admin", adminRoutes_1.default);
 app.get("/health", (req, res) => {
     res.json({
         status: "ok",

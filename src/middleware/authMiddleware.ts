@@ -1,11 +1,12 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import User from "../models/User";
 
 export type AuthRequest = Request & {
   userId?: string;
 };
 
-export function authMiddleware(
+export async function authMiddleware(
   req: AuthRequest,
   res: Response,
   next: NextFunction,
@@ -13,7 +14,7 @@ export function authMiddleware(
   const token = req.cookies?.token;
 
   if (!token) {
-    return res.status(401).json({ message: "Unauthorized" });
+    return res.status(401).json({ success: false, message: "Unauthorized" });
   }
 
   try {
@@ -23,6 +24,15 @@ export function authMiddleware(
     };
 
     req.userId = decoded.userId;
+    const user = await User.findById(decoded.userId)
+      .select("isBlocked blockedReason")
+      .lean();
+    if (user?.isBlocked) {
+      return res.status(403).json({
+        success: false,
+        message: user.blockedReason || "Your account is blocked by admin.",
+      });
+    }
     next();
   } catch {
     const isProduction = process.env.NODE_ENV === "production";
@@ -34,6 +44,6 @@ export function authMiddleware(
       path: "/",
     });
 
-    return res.status(401).json({ message: "Invalid or expired token" });
+    return res.status(401).json({ success: false, message: "Unauthorized" });
   }
 }

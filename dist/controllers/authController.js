@@ -154,6 +154,13 @@ async function login(req, res) {
                 message: authMessages.invalidCredentials,
             });
         }
+        if (user.isBlocked) {
+            return res.status(403).json({
+                success: false,
+                message: user.blockedReason ||
+                    "Your account has been blocked by admin. Contact support.",
+            });
+        }
         const isPasswordValid = await bcryptjs_1.default.compare(password, user.password);
         if (!isPasswordValid) {
             return res.status(401).json({

@@ -20,5 +20,6 @@ const incomeSchema = new Schema<IIncome>(
 );
 
 incomeSchema.index({ userId: 1, createdAt: -1 });
+incomeSchema.index({ userId: 1, date: -1 });
 
 export default model<IIncome>("Income", incomeSchema);

@@ -54,7 +54,10 @@ class ApiError extends Error {
     }
 }
 function sendError(res, status, message, field) {
-    const body = { message };
+    const body = {
+        success: false,
+        message,
+    };
     if (field)
         body.field = field;
     return res.status(status).json(body);
@@ -272,13 +275,17 @@ const createLending = async (req, res) => {
     const userId = req.userId;
     if (!userId)
         return sendError(res, 401, (0, apiMessages_1.errorMessage)("unauthorized"));
-    const { personName, amount, fundingSource, date } = req.body;
+    const { personName, amount, fundingSource, borrowedFromName, borrowReason, date, } = req.body;
     if (!personName?.trim())
         return sendError(res, 400, "personName is required. Lending to 'someone' is how chaos gets receipts.", "personName");
     if (typeof amount !== "number" || amount <= 0)
         return sendError(res, 400, (0, apiMessages_1.errorMessage)("invalidAmount"), "amount");
     if (!fundingSource || !["PERSONAL", "BORROWED"].includes(fundingSource))
         return sendError(res, 400, "fundingSource must be PERSONAL or BORROWED", "fundingSource");
+    if (fundingSource === "BORROWED" && !borrowedFromName?.trim())
+        return sendError(res, 400, "borrowedFromName is required.", "borrowedFromName");
+    if (fundingSource === "BORROWED" && !borrowReason?.trim())
+        return sendError(res, 400, "borrowReason is required.", "borrowReason");
     const lendingDate = date ? new Date(date) : new Date();
     if (isNaN(lendingDate.getTime()))
         return sendError(res, 400, (0, apiMessages_1.errorMessage)("invalidDate"), "date");
@@ -289,7 +296,7 @@ const createLending = async (req, res) => {
             if (fundingSource === "PERSONAL") {
                 const available = await getAvailableBalance(userId, session);
                 if (amount > available) {
-                    throw new ApiError(400, `Insufficient balance. Available: ${available}. Wallet said sit down.`, "amount");
+                    throw new ApiError(400, "You do not have enough balance to lend this amount.", "amount");
                 }
                 await deductFromBalance(userId, amount, session);
                 await syncBalanceRecord(userId, session);
@@ -305,13 +312,12 @@ const createLending = async (req, res) => {
                 lending = docs[0];
             }
             else {
-                // BORROWED: auto-create a Loan record to track the debt
                 const loanDocs = await LoanDebt_1.default.create([
                     {
                         userId,
-                        personName: `Borrowed to lend to ${personName.trim()}`,
+                        personName: borrowedFromName.trim(),
                         amount,
-                        reason: `Borrowed funds to lend to ${personName.trim()}`,
+                        reason: borrowReason.trim(),
                         date: lendingDate,
                         status: "ACTIVE",
                     },
@@ -328,7 +334,6 @@ const createLending = async (req, res) => {
                     },
                 ], { session });
                 lending = lendingDocs[0];
-                // Back-link the auto-loan to the lending
                 await LoanDebt_1.default.findOneAndUpdate({ _id: autoLoan._id }, { linkedLendingId: lending._id.toString() }, { session });
             }
         });
@@ -389,19 +394,6 @@ const repayLending = async (req, res) => {
                 lending.status = "PARTIALLY_REPAID";
             }
             await lending.save({ session });
-            if (fullyRepaid) {
-                if (lending.fundingSource === "BORROWED" && lending.linkedLoanId) {
-                    const linkedLoan = await LoanDebt_1.default.findOne({
-                        _id: lending.linkedLoanId,
-                        userId,
-                    }).session(session);
-                    if (linkedLoan) {
-                        linkedLoan.paidAmount = linkedLoan.amount;
-                        linkedLoan.status = "PAID";
-                        await linkedLoan.save({ session });
-                    }
-                }
-            }
             if (lending.fundingSource === "PERSONAL") {
                 await creditCashBalance(userId, amount, session);
             }

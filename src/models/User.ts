@@ -8,6 +8,12 @@ export interface IUser extends Document {
   lastLoginDate?: Date | null;
   loginStreak: number;
   longestLoginStreak: number;
+  isBlocked: boolean;
+  blockedReason?: string | null;
+  blockedAt?: Date | null;
+  blockedBy?: mongoose.Types.ObjectId | null;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 const UserSchema = new Schema<IUser>(
@@ -49,6 +55,23 @@ const UserSchema = new Schema<IUser>(
     longestLoginStreak: {
       type: Number,
       default: 0,
+    },
+    isBlocked: {
+      type: Boolean,
+      default: false,
+    },
+    blockedReason: {
+      type: String,
+      default: null,
+    },
+    blockedAt: {
+      type: Date,
+      default: null,
+    },
+    blockedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
     },
   },
   {

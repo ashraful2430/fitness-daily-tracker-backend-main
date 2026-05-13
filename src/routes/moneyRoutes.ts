@@ -23,6 +23,8 @@ import {
   getFinanceInsights,
   addIncome,
   addSavings,
+  getMonthlyIncome,
+  getMonthlyIncomeHistory,
 } from "../controllers/financeController";
 import { authMiddleware } from "../middleware/authMiddleware";
 
@@ -56,6 +58,8 @@ router.get("/debts", getDebtList);
 
 router.post("/income", addIncome);
 router.post("/savings", addSavings);
+router.get("/monthly-income", getMonthlyIncome);
+router.get("/monthly-income/history", getMonthlyIncomeHistory);
 
 router.get("/summary", getFinanceSummary);
 router.get("/insights", getFinanceInsights);
