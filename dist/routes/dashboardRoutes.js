@@ -13,6 +13,8 @@ router.post("/focus", authMiddleware_1.authMiddleware, dashboardController_1.log
 router.post("/weekly-goal", authMiddleware_1.authMiddleware, dashboardController_1.updateWeeklyGoal);
 // Route to fetch weekly stats
 router.get("/weekly-stats", authMiddleware_1.authMiddleware, dashboardController_1.getWeeklyStats);
+router.get("/monthly-overview", authMiddleware_1.authMiddleware, dashboardController_1.getMonthlyOverview);
+router.get("/monthly-history", authMiddleware_1.authMiddleware, dashboardController_1.getMonthlyHistory);
 // Route to update weekly stats
 router.post("/weekly-stats", authMiddleware_1.authMiddleware, dashboardController_1.updateWeeklyStats);
 exports.default = router;
