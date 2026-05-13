@@ -12,6 +12,7 @@ import learningRoutes from "./routes/learningRoutes";
 import loanRoutes from "./routes/loanRoutes";
 import lendingRoutes from "./routes/lendingRoutes";
 import financeRoutes from "./routes/financeRoutes";
+import adminRoutes from "./routes/adminRoutes";
 
 dotenv.config();
 
@@ -59,6 +60,7 @@ app.use("/api/learning", learningRoutes);
 app.use("/api/loans", loanRoutes);
 app.use("/api/lending", lendingRoutes);
 app.use("/api/finance", financeRoutes);
+app.use("/api/admin", adminRoutes);
 
 app.get("/health", (req, res) => {
   res.json({

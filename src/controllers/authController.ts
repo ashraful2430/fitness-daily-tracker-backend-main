@@ -192,6 +192,14 @@ export async function login(req: AuthRequest, res: Response) {
       });
     }
 
+    if (user.isBlocked) {
+      return res.status(403).json({
+        success: false,
+        message:
+          user.blockedReason ||
+          "Your account has been blocked by admin. Contact support.",
+      });
+    }
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {

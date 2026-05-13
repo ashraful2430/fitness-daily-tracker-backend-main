@@ -5,7 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.authMiddleware = authMiddleware;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-function authMiddleware(req, res, next) {
+const User_1 = __importDefault(require("../models/User"));
+async function authMiddleware(req, res, next) {
     const token = req.cookies?.token;
     if (!token) {
         return res.status(401).json({ success: false, message: "Unauthorized" });
@@ -13,6 +14,15 @@ function authMiddleware(req, res, next) {
     try {
         const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
         req.userId = decoded.userId;
+        const user = await User_1.default.findById(decoded.userId)
+            .select("isBlocked blockedReason")
+            .lean();
+        if (user?.isBlocked) {
+            return res.status(403).json({
+                success: false,
+                message: user.blockedReason || "Your account is blocked by admin.",
+            });
+        }
         next();
     }
     catch {
