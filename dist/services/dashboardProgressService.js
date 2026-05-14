@@ -5,7 +5,7 @@ exports.clampScore = clampScore;
 exports.computeDailyProgress = computeDailyProgress;
 exports.DASHBOARD_PROGRESS_CONFIG = {
     login: { weight: 20 },
-    focus: { weight: 25, targetMinutes: 120 },
+    learningFocus: { weight: 25, targetMinutes: 120 },
     workout: { weight: 25, targetCount: 1 },
     sections: { weight: 30 },
 };
@@ -17,8 +17,9 @@ function clampScore(value) {
 }
 function computeDailyProgress(input) {
     const loginEarned = input.loggedInToday ? exports.DASHBOARD_PROGRESS_CONFIG.login.weight : 0;
-    const focusRatio = exports.DASHBOARD_PROGRESS_CONFIG.focus.targetMinutes > 0
-        ? Math.min(input.focusMinutes / exports.DASHBOARD_PROGRESS_CONFIG.focus.targetMinutes, 1)
+    const combinedMinutes = (input.learningMinutes ?? 0) + (input.focusMinutes ?? 0);
+    const learningFocusRatio = exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.targetMinutes > 0
+        ? Math.min(combinedMinutes / exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.targetMinutes, 1)
         : 0;
     const workoutRatio = exports.DASHBOARD_PROGRESS_CONFIG.workout.targetCount > 0
         ? Math.min(input.workoutCount / exports.DASHBOARD_PROGRESS_CONFIG.workout.targetCount, 1)
@@ -26,10 +27,10 @@ function computeDailyProgress(input) {
     const sectionsRatio = input.totalSections > 0
         ? Math.min(input.completedSections / input.totalSections, 1)
         : 0;
-    const focusEarned = Math.round(exports.DASHBOARD_PROGRESS_CONFIG.focus.weight * focusRatio);
+    const learningFocusEarned = Math.round(exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.weight * learningFocusRatio);
     const workoutEarned = Math.round(exports.DASHBOARD_PROGRESS_CONFIG.workout.weight * workoutRatio);
     const sectionsEarned = Math.round(exports.DASHBOARD_PROGRESS_CONFIG.sections.weight * sectionsRatio);
-    const totalEarned = clampScore(loginEarned + focusEarned + workoutEarned + sectionsEarned);
+    const totalEarned = clampScore(loginEarned + learningFocusEarned + workoutEarned + sectionsEarned);
     const missing = [];
     if (!input.loggedInToday) {
         missing.push("Log in today");
@@ -37,8 +38,8 @@ function computeDailyProgress(input) {
     if (input.workoutCount < exports.DASHBOARD_PROGRESS_CONFIG.workout.targetCount) {
         missing.push("Complete one workout");
     }
-    if (input.focusMinutes < exports.DASHBOARD_PROGRESS_CONFIG.focus.targetMinutes) {
-        missing.push(`Reach ${exports.DASHBOARD_PROGRESS_CONFIG.focus.targetMinutes} focus minutes`);
+    if (combinedMinutes < exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.targetMinutes) {
+        missing.push(`Reach ${exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.targetMinutes} combined learning/focus minutes`);
     }
     if (input.totalSections > 0 && input.completedSections < input.totalSections) {
         missing.push("Complete all today's sections");
@@ -53,12 +54,23 @@ function computeDailyProgress(input) {
                     max: exports.DASHBOARD_PROGRESS_CONFIG.login.weight,
                     completed: input.loggedInToday,
                 },
+                learningFocus: {
+                    earned: learningFocusEarned,
+                    max: exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.weight,
+                    completed: combinedMinutes >= exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.targetMinutes,
+                    learningMinutes: input.learningMinutes,
+                    focusMinutes: input.focusMinutes,
+                    combinedMinutes,
+                    targetMinutes: exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.targetMinutes,
+                    learningSessionsCount: input.learningSessionsCount,
+                    focusSessionsCount: input.focusSessionsCount,
+                },
                 focus: {
-                    earned: focusEarned,
-                    max: exports.DASHBOARD_PROGRESS_CONFIG.focus.weight,
-                    completed: input.focusMinutes >= exports.DASHBOARD_PROGRESS_CONFIG.focus.targetMinutes,
-                    minutes: input.focusMinutes,
-                    targetMinutes: exports.DASHBOARD_PROGRESS_CONFIG.focus.targetMinutes,
+                    earned: learningFocusEarned,
+                    max: exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.weight,
+                    completed: combinedMinutes >= exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.targetMinutes,
+                    minutes: combinedMinutes,
+                    targetMinutes: exports.DASHBOARD_PROGRESS_CONFIG.learningFocus.targetMinutes,
                 },
                 workout: {
                     earned: workoutEarned,

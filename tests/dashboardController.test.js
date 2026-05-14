@@ -10,6 +10,7 @@ const Expense = require("../dist/models/Expense").default;
 const Loan = require("../dist/models/Loan").default;
 const Lending = require("../dist/models/Lending").default;
 const ScoreSection = require("../dist/models/ScoreSection").ScoreSection;
+const LearningSession = require("../dist/models/LearningSession").default;
 const financeSummaryService = require("../dist/services/canonicalFinanceSummaryService");
 const monthlyIncomeService = require("../dist/services/monthlyIncomeService");
 
@@ -65,6 +66,8 @@ function installZeroDataStubs() {
   patch(Loan, "countDocuments", async () => 0);
   patch(Lending, "countDocuments", async () => 0);
   patch(ScoreSection, "find", () => chainableLean([]));
+  patch(LearningSession, "aggregate", async () => []);
+  patch(LearningSession, "countDocuments", async () => 0);
   patch(financeSummaryService, "getCanonicalFinanceSummary", async () => ({ availableBalance: 0 }));
   patch(monthlyIncomeService, "getMonthlyIncomeOrDefault", async () => ({
     salaryIncome: 0,
@@ -101,7 +104,9 @@ describe("dashboard controller upgrades", () => {
     assert.strictEqual(res.body.data.kpis.loginStreak.current, 0);
     assert.strictEqual(res.body.data.kpis.availableBalance, 0);
     assert.strictEqual(res.body.data.kpis.todayScore, 0);
+    assert.strictEqual(res.body.data.kpis.learningToday.minutes, 0);
     assert.strictEqual(res.body.data.dailyProgress.breakdown.focus.max, 25);
+    assert.strictEqual(res.body.data.dailyProgress.breakdown.learningFocus.max, 25);
     assert.strictEqual(typeof res.body.data.moduleOverview, "object");
     assert.strictEqual(Array.isArray(res.body.data.weeklyStats), true);
     assert.strictEqual(res.body.data.weeklyStats.length, 7);
@@ -111,6 +116,9 @@ describe("dashboard controller upgrades", () => {
     installZeroDataStubs();
     patch(Workout, "aggregate", async () => [{ _id: "2026-05-10", count: 2 }]);
     patch(dashboardModels.FocusSession, "aggregate", async () => [{ _id: "2026-05-10", totalMinutes: 30 }]);
+    patch(LearningSession, "aggregate", async () => [
+      { _id: "2026-05-10", learningMinutes: 40, learningSessions: 2, completedLearningSessions: 1 },
+    ]);
     patch(Income, "aggregate", async () => [{ _id: "2026-05-10", count: 1 }]);
     patch(Expense, "aggregate", async () => [{ _id: "2026-05-10", count: 2 }]);
 
@@ -125,6 +133,9 @@ describe("dashboard controller upgrades", () => {
     const d = res.body.data.find((row) => row.date === "2026-05-10");
     assert.strictEqual(d.workouts, 2);
     assert.strictEqual(d.focusMinutes, 30);
+    assert.strictEqual(d.learningMinutes, 40);
+    assert.strictEqual(d.learningSessions, 2);
+    assert.strictEqual(d.completedLearningSessions, 1);
     assert.strictEqual(d.moneyActivities, 3);
   });
 
