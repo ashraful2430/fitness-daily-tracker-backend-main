@@ -1,311 +1,227 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.validateLearningRequest = validateLearningRequest;
 exports.validateCreateLearningSession = validateCreateLearningSession;
 exports.validateUpdateLearningSession = validateUpdateLearningSession;
 exports.validateLearningSessionListQuery = validateLearningSessionListQuery;
 const LearningSession_1 = require("../models/LearningSession");
-function isValidDateString(value) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        return false;
-    }
-    const parsed = new Date(`${value}T00:00:00.000Z`);
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
+function isDateKey(value) {
+    return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
-function parseOptionalDate(value, fieldName) {
-    if (value === undefined) {
+function pickString(value, field, required = false) {
+    const v = typeof value === "string" ? value.trim() : "";
+    if (required && !v)
+        return { ok: false, message: `${field} is required` };
+    return { ok: true, value: v };
+}
+function pickNumber(value, field, min, max, required = false) {
+    if (value === undefined && !required)
         return { ok: true, value: undefined };
-    }
-    if (value === null) {
-        return { ok: true, value: null };
-    }
-    if (typeof value !== "string") {
-        return {
-            ok: false,
-            message: `${fieldName} must be a valid ISO date string or null.`,
-        };
-    }
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-        return {
-            ok: false,
-            message: `${fieldName} must be a valid ISO date string or null.`,
-        };
-    }
-    return { ok: true, value: parsed };
+    if (typeof value !== "number" || Number.isNaN(value))
+        return { ok: false, message: `${field} must be a number` };
+    if (value < min)
+        return { ok: false, message: `${field} must be at least ${min}` };
+    if (typeof max === "number" && value > max)
+        return { ok: false, message: `${field} must be at most ${max}` };
+    return { ok: true, value };
 }
-function parsePositiveInteger(value, fieldName, minimum) {
-    if (typeof value !== "number" || Number.isNaN(value) || value < minimum) {
-        return {
-            success: false,
-            message: `${fieldName} must be a number greater than or equal to ${minimum}.`,
-        };
+function inEnum(value, values, field, required = false) {
+    if (value === undefined && !required)
+        return { ok: true, value: undefined };
+    if (typeof value !== "string" || !values.includes(value)) {
+        return { ok: false, message: `${field} must be one of: ${values.join(", ")}` };
     }
-    return {
-        success: true,
-        data: value,
-    };
+    return { ok: true, value };
 }
-function parseNonNegativeInteger(value, fieldName) {
-    if (typeof value !== "number" || Number.isNaN(value) || value < 0) {
-        return {
-            success: false,
-            message: `${fieldName} must be a number greater than or equal to 0.`,
-        };
-    }
-    return {
-        success: true,
-        data: value,
-    };
-}
-function parseStatus(value) {
-    if (typeof value !== "string" ||
-        !LearningSession_1.LEARNING_SESSION_STATUSES.includes(value)) {
-        return {
-            success: false,
-            message: `status must be one of: ${LearningSession_1.LEARNING_SESSION_STATUSES.join(", ")}.`,
-        };
-    }
-    return {
-        success: true,
-        data: value,
-    };
-}
-function parseOptionalText(value, fieldName) {
-    if (value === undefined || value === null) {
+function validateLearningRequest(type, payload) {
+    if (type === "listSessions") {
+        const page = Number.parseInt(String(payload.page ?? "1"), 10);
+        const limit = Number.parseInt(String(payload.limit ?? "20"), 10);
+        if (!Number.isInteger(page) || page < 1)
+            return { success: false, message: "page must be a positive integer" };
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+            return { success: false, message: "limit must be between 1 and 100" };
         return {
             success: true,
-            data: undefined,
+            data: {
+                status: payload.status,
+                subject: payload.subject,
+                learnerMode: payload.learnerMode,
+                studyDate: payload.studyDate,
+                fromDate: payload.fromDate,
+                toDate: payload.toDate,
+                page,
+                limit,
+            },
         };
     }
-    if (typeof value !== "string") {
+    if (type === "createSession" || type === "updateSession") {
+        const required = type === "createSession";
+        const title = pickString(payload.title, "title", required);
+        if (!title.ok)
+            return { success: false, message: title.message };
+        const subject = pickString(payload.subject, "subject", required);
+        if (!subject.ok)
+            return { success: false, message: subject.message };
+        const plannedMinutes = pickNumber(payload.plannedMinutes, "plannedMinutes", 1, 600, required);
+        if (!plannedMinutes.ok)
+            return { success: false, message: plannedMinutes.message };
+        const actualMinutes = pickNumber(payload.actualMinutes, "actualMinutes", 0);
+        if (!actualMinutes.ok)
+            return { success: false, message: actualMinutes.message };
+        if (required && !isDateKey(payload.studyDate))
+            return { success: false, message: "studyDate must be valid YYYY-MM-DD" };
+        if (!required && payload.studyDate !== undefined && !isDateKey(payload.studyDate))
+            return { success: false, message: "studyDate must be valid YYYY-MM-DD" };
+        const learnerMode = inEnum(payload.learnerMode, LearningSession_1.LEARNER_MODES, "learnerMode", required);
+        if (!learnerMode.ok)
+            return { success: false, message: learnerMode.message };
+        const status = inEnum(payload.status, LearningSession_1.LEARNING_SESSION_STATUSES, "status");
+        if (!status.ok)
+            return { success: false, message: status.message };
+        const learningType = inEnum(payload.learningType, LearningSession_1.LEARNING_TYPES, "learningType");
+        if (!learningType.ok)
+            return { success: false, message: learningType.message };
+        const difficulty = inEnum(payload.difficulty, LearningSession_1.LEARNING_DIFFICULTIES, "difficulty");
+        if (!difficulty.ok)
+            return { success: false, message: difficulty.message };
+        const priority = inEnum(payload.priority, LearningSession_1.LEARNING_PRIORITIES, "priority");
+        if (!priority.ok)
+            return { success: false, message: priority.message };
+        const data = {};
+        const entries = [
+            ["title", title.value],
+            ["subject", subject.value],
+            ["goal", typeof payload.goal === "string" ? payload.goal.trim() : undefined],
+            ["plannedMinutes", plannedMinutes.value],
+            ["actualMinutes", actualMinutes.value],
+            ["studyDate", payload.studyDate],
+            ["learnerMode", learnerMode.value],
+            ["status", status.value],
+            ["learningType", learningType.value],
+            ["difficulty", difficulty.value],
+            ["priority", priority.value],
+            ["notes", typeof payload.notes === "string" ? payload.notes.trim() : payload.notes],
+            ["startedAt", payload.startedAt ? new Date(payload.startedAt) : payload.startedAt],
+            ["pausedAt", payload.pausedAt ? new Date(payload.pausedAt) : payload.pausedAt],
+            ["completedAt", payload.completedAt ? new Date(payload.completedAt) : payload.completedAt],
+            ["alarmEnabled", payload.alarmEnabled],
+            ["alarmSound", payload.alarmSound],
+            ["breakEnabled", payload.breakEnabled],
+            ["breakMinutes", payload.breakMinutes],
+            ["tags", Array.isArray(payload.tags) ? payload.tags.map((t) => String(t).trim()).filter(Boolean) : undefined],
+        ];
+        for (const [k, v] of entries) {
+            if (v !== undefined)
+                data[k] = v;
+        }
+        return { success: true, data };
+    }
+    if (type === "rescheduleSession") {
+        if (!isDateKey(payload.studyDate))
+            return { success: false, message: "studyDate must be valid YYYY-MM-DD" };
+        return { success: true, data: { studyDate: payload.studyDate } };
+    }
+    if (type === "timerPreset" || type === "timerPresetPatch") {
+        const required = type === "timerPreset";
+        const label = pickString(payload.label, "label", required);
+        if (!label.ok)
+            return { success: false, message: label.message };
+        const minutes = pickNumber(payload.minutes, "minutes", 1, 600, required);
+        if (!minutes.ok)
+            return { success: false, message: minutes.message };
+        const data = {};
+        if (label.value !== undefined)
+            data.label = label.value;
+        if (minutes.value !== undefined)
+            data.minutes = minutes.value;
+        return { success: true, data };
+    }
+    if (type === "template") {
+        const base = validateLearningRequest("createSession", payload);
+        if (!base.success)
+            return base;
+        const name = pickString(payload.name, "name", true);
+        if (!name.ok)
+            return { success: false, message: name.message };
         return {
-            success: false,
-            message: `${fieldName} must be a string when provided.`,
+            success: true,
+            data: {
+                ...base.data,
+                name: name.value,
+                notesPlaceholder: typeof payload.notesPlaceholder === "string" ? payload.notesPlaceholder.trim() : "",
+            },
         };
     }
-    return {
-        success: true,
-        data: value.trim(),
-    };
+    if (type === "goals") {
+        const daily = pickNumber(payload.dailyGoalMinutes, "dailyGoalMinutes", 1, 1440, true);
+        if (!daily.ok)
+            return { success: false, message: daily.message };
+        const weekly = pickNumber(payload.weeklyGoalMinutes, "weeklyGoalMinutes", 1, 10080, true);
+        if (!weekly.ok)
+            return { success: false, message: weekly.message };
+        return { success: true, data: { dailyGoalMinutes: daily.value, weeklyGoalMinutes: weekly.value } };
+    }
+    if (type === "childControls") {
+        const daily = pickNumber(payload.dailyLimitMinutes, "dailyLimitMinutes", 1, 600, true);
+        if (!daily.ok)
+            return { success: false, message: daily.message };
+        if (payload.parentPin !== undefined && (typeof payload.parentPin !== "string" || payload.parentPin.trim().length < 4)) {
+            return { success: false, message: "parentPin must be at least 4 characters" };
+        }
+        return {
+            success: true,
+            data: {
+                parentPin: typeof payload.parentPin === "string" ? payload.parentPin.trim() : undefined,
+                dailyLimitMinutes: daily.value,
+                rewardPointsEnabled: Boolean(payload.rewardPointsEnabled),
+                allowedSubjects: Array.isArray(payload.allowedSubjects)
+                    ? payload.allowedSubjects.map((s) => String(s).trim()).filter(Boolean)
+                    : [],
+            },
+        };
+    }
+    if (type === "note" || type === "notePatch") {
+        const required = type === "note";
+        const fields = ["summary", "difficultPoints", "nextAction"];
+        const data = {};
+        for (const field of fields) {
+            const value = payload[field];
+            if (required && typeof value !== "string")
+                return { success: false, message: `${field} is required` };
+            if (value !== undefined)
+                data[field] = String(value).trim();
+        }
+        if (payload.important !== undefined)
+            data.important = Boolean(payload.important);
+        if (!required && Object.keys(data).length === 0)
+            return { success: false, message: "No note fields provided" };
+        return { success: true, data };
+    }
+    return { success: false, message: "Unsupported validation type" };
 }
+// Backward-compatible helpers used by legacy tests/routes.
 function validateCreateLearningSession(body) {
-    if (!body || typeof body !== "object") {
-        return {
-            success: false,
-            message: "Request body is required.",
-        };
-    }
-    const payload = body;
-    const title = typeof payload.title === "string" ? payload.title.trim() : "";
-    const subject = typeof payload.subject === "string" ? payload.subject.trim() : "";
-    const notes = parseOptionalText(payload.notes, "notes");
-    if (!notes.success) {
-        return notes;
-    }
-    const date = typeof payload.date === "string" ? payload.date.trim() : "";
-    if (!title) {
-        return { success: false, message: "title is required." };
-    }
-    if (!subject) {
-        return { success: false, message: "subject is required." };
-    }
-    const plannedMinutes = parsePositiveInteger(payload.plannedMinutes, "plannedMinutes", 1);
-    if (!plannedMinutes.success) {
-        return plannedMinutes;
-    }
-    if (!date || !isValidDateString(date)) {
-        return {
-            success: false,
-            message: "date must be a valid YYYY-MM-DD string.",
-        };
-    }
-    let actualMinutes;
-    if (payload.actualMinutes !== undefined) {
-        const parsed = parseNonNegativeInteger(payload.actualMinutes, "actualMinutes");
-        if (!parsed.success) {
-            return parsed;
+    const normalized = body && typeof body === "object"
+        ? {
+            ...body,
+            studyDate: body.studyDate ?? body.date,
+            learnerMode: body.learnerMode ?? "self_learner",
         }
-        actualMinutes = parsed.data;
-    }
-    let status;
-    if (payload.status !== undefined) {
-        const parsedStatus = parseStatus(payload.status);
-        if (!parsedStatus.success) {
-            return parsedStatus;
-        }
-        status = parsedStatus.data;
-    }
-    const startedAt = parseOptionalDate(payload.startedAt, "startedAt");
-    if (!startedAt.ok) {
-        return {
-            success: false,
-            message: startedAt.message,
-        };
-    }
-    const completedAt = parseOptionalDate(payload.completedAt, "completedAt");
-    if (!completedAt.ok) {
-        return {
-            success: false,
-            message: completedAt.message,
-        };
-    }
-    return {
-        success: true,
-        data: {
-            title,
-            subject,
-            plannedMinutes: plannedMinutes.data,
-            actualMinutes,
-            status,
-            notes: notes.data,
-            date,
-            startedAt: startedAt.value,
-            completedAt: completedAt.value,
-        },
-    };
+        : body;
+    return validateLearningRequest("createSession", normalized);
 }
 function validateUpdateLearningSession(body) {
-    if (!body || typeof body !== "object") {
-        return {
-            success: false,
-            message: "Request body is required.",
-        };
-    }
-    const payload = body;
-    const updates = {};
-    if (payload.title !== undefined) {
-        if (typeof payload.title !== "string" || !payload.title.trim()) {
-            return { success: false, message: "title must be a non-empty string." };
-        }
-        updates.title = payload.title.trim();
-    }
-    if (payload.subject !== undefined) {
-        if (typeof payload.subject !== "string" || !payload.subject.trim()) {
-            return { success: false, message: "subject must be a non-empty string." };
-        }
-        updates.subject = payload.subject.trim();
-    }
-    if (payload.plannedMinutes !== undefined) {
-        const parsed = parsePositiveInteger(payload.plannedMinutes, "plannedMinutes", 1);
-        if (!parsed.success) {
-            return parsed;
-        }
-        updates.plannedMinutes = parsed.data;
-    }
-    if (payload.actualMinutes !== undefined) {
-        const parsed = parseNonNegativeInteger(payload.actualMinutes, "actualMinutes");
-        if (!parsed.success) {
-            return parsed;
-        }
-        updates.actualMinutes = parsed.data;
-    }
-    if (payload.status !== undefined) {
-        const parsedStatus = parseStatus(payload.status);
-        if (!parsedStatus.success) {
-            return parsedStatus;
-        }
-        updates.status = parsedStatus.data;
-    }
-    if (payload.notes !== undefined) {
-        if (payload.notes !== null && typeof payload.notes !== "string") {
-            return {
-                success: false,
-                message: "notes must be a string when provided.",
-            };
-        }
-        updates.notes =
-            typeof payload.notes === "string" ? payload.notes.trim() : "";
-    }
-    if (payload.date !== undefined) {
-        if (typeof payload.date !== "string" || !isValidDateString(payload.date.trim())) {
-            return {
-                success: false,
-                message: "date must be a valid YYYY-MM-DD string.",
-            };
-        }
-        updates.date = payload.date.trim();
-    }
-    const startedAt = parseOptionalDate(payload.startedAt, "startedAt");
-    if (!startedAt.ok) {
-        return { success: false, message: startedAt.message };
-    }
-    if (payload.startedAt !== undefined) {
-        updates.startedAt = startedAt.value ?? null;
-    }
-    const completedAt = parseOptionalDate(payload.completedAt, "completedAt");
-    if (!completedAt.ok) {
-        return { success: false, message: completedAt.message };
-    }
-    if (payload.completedAt !== undefined) {
-        updates.completedAt = completedAt.value ?? null;
-    }
-    if (Object.keys(updates).length === 0) {
-        return {
-            success: false,
-            message: "At least one editable field must be provided.",
-        };
-    }
-    return {
-        success: true,
-        data: updates,
-    };
+    const normalized = body && typeof body === "object" && body.date && !body.studyDate
+        ? { ...body, studyDate: body.date }
+        : body;
+    return validateLearningRequest("updateSession", normalized);
 }
 function validateLearningSessionListQuery(query) {
-    const page = typeof query.page === "string" ? Number.parseInt(query.page, 10) : 1;
-    const limit = typeof query.limit === "string" ? Number.parseInt(query.limit, 10) : 10;
-    if (Number.isNaN(page) || page < 1) {
-        return { success: false, message: "page must be a positive integer." };
-    }
-    if (Number.isNaN(limit) || limit < 1 || limit > 100) {
-        return {
-            success: false,
-            message: "limit must be a positive integer between 1 and 100.",
-        };
-    }
-    let status;
-    if (typeof query.status === "string" && query.status.trim()) {
-        const parsedStatus = parseStatus(query.status.trim());
-        if (!parsedStatus.success) {
-            return parsedStatus;
-        }
-        status = parsedStatus.data;
-    }
-    const subject = typeof query.subject === "string" && query.subject.trim()
-        ? query.subject.trim()
-        : undefined;
-    const startDate = typeof query.startDate === "string" && query.startDate.trim()
-        ? query.startDate.trim()
-        : undefined;
-    const endDate = typeof query.endDate === "string" && query.endDate.trim()
-        ? query.endDate.trim()
-        : undefined;
-    if (startDate && !isValidDateString(startDate)) {
-        return {
-            success: false,
-            message: "startDate must be a valid YYYY-MM-DD string.",
-        };
-    }
-    if (endDate && !isValidDateString(endDate)) {
-        return {
-            success: false,
-            message: "endDate must be a valid YYYY-MM-DD string.",
-        };
-    }
-    if (startDate && endDate && startDate > endDate) {
-        return {
-            success: false,
-            message: "startDate cannot be later than endDate.",
-        };
-    }
-    return {
-        success: true,
-        data: {
-            page,
-            limit,
-            status,
-            subject,
-            startDate,
-            endDate,
-        },
+    const normalized = {
+        ...query,
+        fromDate: query.startDate ?? query.fromDate,
+        toDate: query.endDate ?? query.toDate,
     };
+    return validateLearningRequest("listSessions", normalized);
 }
