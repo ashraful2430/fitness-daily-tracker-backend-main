@@ -66,6 +66,7 @@ function installZeroDataStubs() {
   patch(Loan, "countDocuments", async () => 0);
   patch(Lending, "countDocuments", async () => 0);
   patch(ScoreSection, "find", () => chainableLean([]));
+  patch(ScoreSection, "aggregate", async () => []);
   patch(LearningSession, "aggregate", async () => []);
   patch(LearningSession, "countDocuments", async () => 0);
   patch(financeSummaryService, "getCanonicalFinanceSummary", async () => ({ availableBalance: 0 }));
@@ -186,6 +187,9 @@ describe("dashboard controller upgrades", () => {
     assert.strictEqual(goodRes.statusCode, 200);
     assert.strictEqual(goodRes.body.success, true);
     assert.strictEqual(goodRes.body.data.length, 3);
+    assert.strictEqual(typeof goodRes.body.data[0].totalLearningMinutes, "number");
+    assert.strictEqual(typeof goodRes.body.data[0].totalLearningSessions, "number");
+    assert.strictEqual(typeof goodRes.body.data[0].completedLearningSessions, "number");
     assert.ok(
       `${goodRes.body.data[0].year}-${goodRes.body.data[0].month}` >=
         `${goodRes.body.data[1].year}-${goodRes.body.data[1].month}`,

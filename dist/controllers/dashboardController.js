@@ -157,6 +157,13 @@ const getMonthlyOverview = async (req, res) => {
             getMonthlyDailySeries(userId, selectedRange.start, selectedRange.end),
             (0, canonicalFinanceSummaryService_1.getCanonicalFinanceSummary)(userId),
         ]);
+        const currentLocal = getLocalMonthYear(new Date());
+        const hasMoneyActivity = selectedMoney.income > 0 || selectedMoney.expense > 0;
+        const availableBalanceEndOfMonth = !hasMoneyActivity
+            ? 0
+            : currentLocal.month === month && currentLocal.year === year
+                ? summary.availableBalance ?? 0
+                : 0;
         return res.status(200).json({
             success: true,
             data: {
@@ -166,7 +173,7 @@ const getMonthlyOverview = async (req, res) => {
                     expense: selectedMoney.expense,
                     savings: selectedMoney.income - selectedMoney.expense,
                     netBalanceChange: selectedMoney.income - selectedMoney.expense,
-                    availableBalanceEndOfMonth: summary.availableBalance ?? 0,
+                    availableBalanceEndOfMonth,
                 },
                 productivity: selectedProd,
                 comparison: {
@@ -225,6 +232,9 @@ const getMonthlyHistory = async (req, res) => {
                 netBalanceChange: money.income - money.expense,
                 averageDailyScore: productivity.averageDailyScore,
                 totalFocusMinutes: productivity.totalFocusMinutes,
+                totalLearningMinutes: productivity.totalLearningMinutes,
+                totalLearningSessions: productivity.totalLearningSessions,
+                completedLearningSessions: productivity.completedLearningSessions,
                 totalWorkouts: productivity.totalWorkouts,
             });
         }
@@ -418,12 +428,16 @@ function calculatePercentage(part, total) {
     return Math.min(Math.round((part / total) * 100), 100);
 }
 function localDateKey(date) {
-    return new Intl.DateTimeFormat("en-CA", {
+    const parts = new Intl.DateTimeFormat("en-CA", {
         timeZone: SERVER_TIMEZONE,
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
-    }).format(date);
+    }).formatToParts(date);
+    const year = parts.find((part) => part.type === "year")?.value ?? "1970";
+    const month = parts.find((part) => part.type === "month")?.value ?? "01";
+    const day = parts.find((part) => part.type === "day")?.value ?? "01";
+    return `${year}-${month}-${day}`;
 }
 function getLocalMonthYear(date) {
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -479,7 +493,7 @@ async function getWeeklyStatsRows(userId, now) {
     const days = Array.from({ length: 7 }, (_, index) => {
         const date = addDays(getStartOfWeek(now), index);
         return {
-            dateKey: date.toISOString().split("T")[0],
+            dateKey: toDateKey(date),
             day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][date.getDay()],
             start: date,
             end: addDays(date, 1),
@@ -491,13 +505,30 @@ async function getWeeklyStatsRows(userId, now) {
     const [workoutAgg, focusAgg, learningAgg, incomeAgg, expenseAgg] = await Promise.all([
         Workout_1.default.aggregate([
             { $match: { userId: objectUserId, createdAt: { $gte: weekStart, $lt: weekEnd } } },
-            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }, count: { $sum: 1 } } },
+            {
+                $group: {
+                    _id: {
+                        $dateToString: {
+                            format: "%Y-%m-%d",
+                            date: "$createdAt",
+                            timezone: SERVER_TIMEZONE,
+                        },
+                    },
+                    count: { $sum: 1 },
+                },
+            },
         ]),
         DashboardData_1.FocusSession.aggregate([
             { $match: { userId: objectUserId, date: { $gte: weekStart, $lt: weekEnd } } },
             {
                 $group: {
-                    _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+                    _id: {
+                        $dateToString: {
+                            format: "%Y-%m-%d",
+                            date: "$date",
+                            timezone: SERVER_TIMEZONE,
+                        },
+                    },
                     totalMinutes: { $sum: "$totalMinutes" },
                 },
             },
@@ -513,17 +544,7 @@ async function getWeeklyStatsRows(userId, now) {
                     },
                     learningMinutes: {
                         $sum: {
-                            $cond: [
-                                { $eq: ["$status", "completed"] },
-                                {
-                                    $cond: [
-                                        { $gt: ["$actualMinutes", 0] },
-                                        "$actualMinutes",
-                                        "$plannedMinutes",
-                                    ],
-                                },
-                                0,
-                            ],
+                            $cond: [{ $gt: ["$actualMinutes", 0] }, "$actualMinutes", { $cond: [{ $eq: ["$status", "completed"] }, "$plannedMinutes", 0] }],
                         },
                     },
                 },
@@ -531,11 +552,33 @@ async function getWeeklyStatsRows(userId, now) {
         ]),
         Income_1.default.aggregate([
             { $match: { userId, date: { $gte: weekStart, $lt: weekEnd } } },
-            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }, count: { $sum: 1 } } },
+            {
+                $group: {
+                    _id: {
+                        $dateToString: {
+                            format: "%Y-%m-%d",
+                            date: "$date",
+                            timezone: SERVER_TIMEZONE,
+                        },
+                    },
+                    count: { $sum: 1 },
+                },
+            },
         ]),
         Expense_1.default.aggregate([
             { $match: { userId, date: { $gte: weekStart, $lt: weekEnd } } },
-            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }, count: { $sum: 1 } } },
+            {
+                $group: {
+                    _id: {
+                        $dateToString: {
+                            format: "%Y-%m-%d",
+                            date: "$date",
+                            timezone: SERVER_TIMEZONE,
+                        },
+                    },
+                    count: { $sum: 1 },
+                },
+            },
         ]),
     ]);
     const workoutMap = Object.fromEntries(workoutAgg.map((row) => [row._id, row.count]));
@@ -568,32 +611,34 @@ async function getMonthlyMoney(userId, start, end) {
 }
 async function getMonthlyProductivity(userId, start, end) {
     const objectUserId = new mongoose_1.default.Types.ObjectId(userId);
-    const [workoutAgg, focusAgg, learningAgg] = await Promise.all([
+    const [workoutAgg, focusAgg, learningAgg, monthlyScores] = await Promise.all([
         Workout_1.default.aggregate([{ $match: { userId: objectUserId, createdAt: { $gte: start, $lt: end } } }, { $group: { _id: null, total: { $sum: 1 } } }]),
         DashboardData_1.FocusSession.aggregate([{ $match: { userId: objectUserId, date: { $gte: start, $lt: end } } }, { $group: { _id: null, total: { $sum: "$totalMinutes" } } }]),
         LearningSession_1.default.aggregate([
-            { $match: { userId, studyDate: { $gte: toDateKey(start), $lte: toDateKey(addDays(end, -1)) }, status: "completed" } },
+            { $match: { userId, studyDate: { $gte: toDateKey(start), $lte: toDateKey(addDays(end, -1)) } } },
             {
                 $group: {
                     _id: null,
                     totalMinutes: {
                         $sum: {
-                            $cond: [{ $gt: ["$actualMinutes", 0] }, "$actualMinutes", "$plannedMinutes"],
+                            $cond: [{ $gt: ["$actualMinutes", 0] }, "$actualMinutes", { $cond: [{ $eq: ["$status", "completed"] }, "$plannedMinutes", 0] }],
                         },
                     },
                     totalSessions: { $sum: 1 },
+                    completedSessions: {
+                        $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+                    },
                 },
             },
         ]),
+        getMonthlyDailyScores(userId, start, end),
     ]);
     const totalWorkouts = workoutAgg[0]?.total ?? 0;
     const totalFocusMinutes = focusAgg[0]?.total ?? 0;
     const totalLearningMinutes = learningAgg[0]?.totalMinutes ?? 0;
     const totalLearningSessions = learningAgg[0]?.totalSessions ?? 0;
-    const completedLearningSessions = totalLearningSessions;
-    const days = Math.max(Math.round((end.getTime() - start.getTime()) / 86400000), 1);
-    const combined = totalFocusMinutes + totalLearningMinutes;
-    const averageDailyScore = Math.round(Math.min(combined / (days * 120), 1) * 50 + Math.min(totalWorkouts / days, 1) * 50);
+    const completedLearningSessions = learningAgg[0]?.completedSessions ?? 0;
+    const averageDailyScore = monthlyScores.averageDailyScore;
     return {
         averageDailyScore,
         totalFocusMinutes,
@@ -605,11 +650,11 @@ async function getMonthlyProductivity(userId, start, end) {
 }
 async function getMonthlyDailySeries(userId, start, end) {
     const objectUserId = new mongoose_1.default.Types.ObjectId(userId);
-    const [incomeAgg, expenseAgg, workoutAgg, focusAgg, learningAgg] = await Promise.all([
-        Income_1.default.aggregate([{ $match: { userId, date: { $gte: start, $lt: end } } }, { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }, total: { $sum: "$amount" } } }]),
-        Expense_1.default.aggregate([{ $match: { userId, date: { $gte: start, $lt: end } } }, { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }, total: { $sum: "$amount" } } }]),
-        Workout_1.default.aggregate([{ $match: { userId: objectUserId, createdAt: { $gte: start, $lt: end } } }, { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }, total: { $sum: 1 } } }]),
-        DashboardData_1.FocusSession.aggregate([{ $match: { userId: objectUserId, date: { $gte: start, $lt: end } } }, { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }, total: { $sum: "$totalMinutes" } } }]),
+    const [incomeAgg, expenseAgg, workoutAgg, focusAgg, learningAgg, scoreMap] = await Promise.all([
+        Income_1.default.aggregate([{ $match: { userId, date: { $gte: start, $lt: end } } }, { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: SERVER_TIMEZONE } }, total: { $sum: "$amount" } } }]),
+        Expense_1.default.aggregate([{ $match: { userId, date: { $gte: start, $lt: end } } }, { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: SERVER_TIMEZONE } }, total: { $sum: "$amount" } } }]),
+        Workout_1.default.aggregate([{ $match: { userId: objectUserId, createdAt: { $gte: start, $lt: end } } }, { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: SERVER_TIMEZONE } }, total: { $sum: 1 } } }]),
+        DashboardData_1.FocusSession.aggregate([{ $match: { userId: objectUserId, date: { $gte: start, $lt: end } } }, { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: SERVER_TIMEZONE } }, total: { $sum: "$totalMinutes" } } }]),
         LearningSession_1.default.aggregate([
             { $match: { userId, studyDate: { $gte: toDateKey(start), $lte: toDateKey(addDays(end, -1)) } } },
             {
@@ -618,16 +663,13 @@ async function getMonthlyDailySeries(userId, start, end) {
                     learningSessions: { $sum: 1 },
                     learningMinutes: {
                         $sum: {
-                            $cond: [
-                                { $eq: ["$status", "completed"] },
-                                { $cond: [{ $gt: ["$actualMinutes", 0] }, "$actualMinutes", "$plannedMinutes"] },
-                                0,
-                            ],
+                            $cond: [{ $gt: ["$actualMinutes", 0] }, "$actualMinutes", { $cond: [{ $eq: ["$status", "completed"] }, "$plannedMinutes", 0] }],
                         },
                     },
                 },
             },
         ]),
+        getMonthlyDailyScores(userId, start, end),
     ]);
     const incomeMap = Object.fromEntries(incomeAgg.map((row) => [row._id, row.total]));
     const expenseMap = Object.fromEntries(expenseAgg.map((row) => [row._id, row.total]));
@@ -643,8 +685,7 @@ async function getMonthlyDailySeries(userId, start, end) {
         const learningMinutes = learningMap[date]?.learningMinutes ?? 0;
         const learningSessions = learningMap[date]?.learningSessions ?? 0;
         const workouts = workoutsMap[date] ?? 0;
-        const score = Math.round(Math.min((focusMinutes + learningMinutes) / 120, 1) * 50 +
-            Math.min(workouts, 1) * 50);
+        const score = scoreMap.byDate[date] ?? 0;
         rows.push({
             date,
             income,
@@ -664,12 +705,13 @@ async function buildModuleOverview(userId, now, availableBalance) {
     const prevWeek = { start: addDays(thisWeek.start, -7), end: thisWeek.start };
     const thisMonth = getLocalMonthYear(now);
     const prevMonth = shiftMonth(thisMonth.month, thisMonth.year, -1);
-    const [thisWeekWorkouts, prevWeekWorkouts, todayWorkouts, thisWeekFocus, prevWeekFocus, learningToday, learningWeek, learningMonth, learningWeekCompleted, learningTodayCompleted, prevLearningWeek, thisMoney, prevMoney, thisLoans, prevLoans, thisLendings, prevLendings, sectionsToday, sectionsYesterday] = await Promise.all([
+    const [thisWeekWorkouts, prevWeekWorkouts, todayWorkouts, thisWeekFocus, prevWeekFocus, todayFocusMinutes, learningToday, learningWeek, learningMonth, learningWeekCompleted, learningTodayCompleted, prevLearningWeek, thisMoney, prevMoney, thisLoans, prevLoans, thisLendings, prevLendings, sectionsToday, sectionsYesterday] = await Promise.all([
         Workout_1.default.countDocuments({ userId: new mongoose_1.default.Types.ObjectId(userId), createdAt: { $gte: thisWeek.start, $lt: thisWeek.end } }),
         Workout_1.default.countDocuments({ userId: new mongoose_1.default.Types.ObjectId(userId), createdAt: { $gte: prevWeek.start, $lt: prevWeek.end } }),
         Workout_1.default.countDocuments({ userId: new mongoose_1.default.Types.ObjectId(userId), createdAt: { $gte: today, $lt: addDays(today, 1) } }),
         sumFocus(userId, thisWeek.start, thisWeek.end),
         sumFocus(userId, prevWeek.start, prevWeek.end),
+        sumFocus(userId, today, addDays(today, 1)),
         getLearningDayStats(userId, toDateKey(today)),
         getLearningRangeStats(userId, thisWeek.start, thisWeek.end),
         getLearningRangeStats(userId, getMonthRange(thisMonth.month, thisMonth.year).start, getMonthRange(thisMonth.month, thisMonth.year).end),
@@ -693,9 +735,9 @@ async function buildModuleOverview(userId, now, availableBalance) {
             monthlyLearningMinutes: learningMonth.minutes,
             completedSessionsToday: learningTodayCompleted,
             completedSessionsWeek: learningWeekCompleted,
-            todayFocusMinutes: await sumFocus(userId, today, addDays(today, 1)),
+            todayFocusMinutes,
             weeklyFocusMinutes: thisWeekFocus,
-            combinedTodayMinutes: learningToday.minutes + (await sumFocus(userId, today, addDays(today, 1))),
+            combinedTodayMinutes: learningToday.minutes + todayFocusMinutes,
             combinedWeeklyMinutes: learningWeek.minutes + thisWeekFocus,
             completionRate: learningWeek.sessionsCount > 0
                 ? Math.round((learningWeekCompleted / learningWeek.sessionsCount) * 100)
@@ -727,11 +769,7 @@ async function getLearningDayStats(userId, dateKey) {
                 },
                 minutes: {
                     $sum: {
-                        $cond: [
-                            { $eq: ["$status", "completed"] },
-                            { $cond: [{ $gt: ["$actualMinutes", 0] }, "$actualMinutes", "$plannedMinutes"] },
-                            0,
-                        ],
+                        $cond: [{ $gt: ["$actualMinutes", 0] }, "$actualMinutes", { $cond: [{ $eq: ["$status", "completed"] }, "$plannedMinutes", 0] }],
                     },
                 },
             },
@@ -753,11 +791,7 @@ async function getLearningRangeStats(userId, start, end) {
                 activeCount: { $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] } },
                 minutes: {
                     $sum: {
-                        $cond: [
-                            { $eq: ["$status", "completed"] },
-                            { $cond: [{ $gt: ["$actualMinutes", 0] }, "$actualMinutes", "$plannedMinutes"] },
-                            0,
-                        ],
+                        $cond: [{ $gt: ["$actualMinutes", 0] }, "$actualMinutes", { $cond: [{ $eq: ["$status", "completed"] }, "$plannedMinutes", 0] }],
                     },
                 },
             },
@@ -777,7 +811,81 @@ async function getLearningCompletedCount(userId, start, end) {
     });
 }
 function toDateKey(date) {
-    return date.toISOString().split("T")[0];
+    return localDateKey(date);
+}
+async function getMonthlyDailyScores(userId, start, end) {
+    const objectUserId = new mongoose_1.default.Types.ObjectId(userId);
+    const lastLogin = await User_1.default.findById(userId).select("lastLoginDate").lean();
+    const loginDate = lastLogin?.lastLoginDate ? localDateKey(new Date(lastLogin.lastLoginDate)) : null;
+    const [workoutAgg, focusAgg, learningAgg, sectionsAgg] = await Promise.all([
+        Workout_1.default.aggregate([
+            { $match: { userId: objectUserId, createdAt: { $gte: start, $lt: end } } },
+            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: SERVER_TIMEZONE } }, workouts: { $sum: 1 } } },
+        ]),
+        DashboardData_1.FocusSession.aggregate([
+            { $match: { userId: objectUserId, date: { $gte: start, $lt: end } } },
+            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: SERVER_TIMEZONE } }, focusMinutes: { $sum: "$totalMinutes" }, focusSessionsCount: { $sum: { $size: "$sessions" } } } },
+        ]),
+        LearningSession_1.default.aggregate([
+            { $match: { userId, studyDate: { $gte: toDateKey(start), $lte: toDateKey(addDays(end, -1)) } } },
+            {
+                $group: {
+                    _id: "$studyDate",
+                    learningMinutes: {
+                        $sum: {
+                            $cond: [{ $gt: ["$actualMinutes", 0] }, "$actualMinutes", { $cond: [{ $eq: ["$status", "completed"] }, "$plannedMinutes", 0] }],
+                        },
+                    },
+                    learningSessionsCount: { $sum: 1 },
+                },
+            },
+        ]),
+        ScoreSection_1.ScoreSection.aggregate([
+            { $match: { userId: objectUserId, date: { $gte: start, $lt: end } } },
+            {
+                $group: {
+                    _id: { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: SERVER_TIMEZONE } },
+                    totalSections: { $sum: 1 },
+                    completedSections: {
+                        $sum: { $cond: [{ $gte: ["$currentValue", "$goalValue"] }, 1, 0] },
+                    },
+                },
+            },
+        ]),
+    ]);
+    const workoutMap = Object.fromEntries(workoutAgg.map((r) => [r._id, r.workouts]));
+    const focusMap = Object.fromEntries(focusAgg.map((r) => [r._id, r]));
+    const learningMap = Object.fromEntries(learningAgg.map((r) => [r._id, r]));
+    const sectionsMap = Object.fromEntries(sectionsAgg.map((r) => [r._id, r]));
+    const byDate = {};
+    const keys = new Set([
+        ...Object.keys(workoutMap),
+        ...Object.keys(focusMap),
+        ...Object.keys(learningMap),
+        ...Object.keys(sectionsMap),
+    ]);
+    if (loginDate)
+        keys.add(loginDate);
+    for (const dateKey of keys) {
+        const score = (0, dashboardProgressService_1.computeDailyProgress)({
+            loggedInToday: loginDate === dateKey,
+            learningMinutes: learningMap[dateKey]?.learningMinutes ?? 0,
+            focusMinutes: focusMap[dateKey]?.focusMinutes ?? 0,
+            learningSessionsCount: learningMap[dateKey]?.learningSessionsCount ?? 0,
+            focusSessionsCount: focusMap[dateKey]?.focusSessionsCount ?? 0,
+            workoutCount: workoutMap[dateKey] ?? 0,
+            completedSections: sectionsMap[dateKey]?.completedSections ?? 0,
+            totalSections: sectionsMap[dateKey]?.totalSections ?? 0,
+        }).todayScore;
+        byDate[dateKey] = score;
+    }
+    const values = Object.values(byDate);
+    return {
+        byDate,
+        averageDailyScore: values.length > 0
+            ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
+            : 0,
+    };
 }
 async function getSectionCompletion(userId, date) {
     const rows = await ScoreSection_1.ScoreSection.find({ userId: new mongoose_1.default.Types.ObjectId(userId), date }).lean();
