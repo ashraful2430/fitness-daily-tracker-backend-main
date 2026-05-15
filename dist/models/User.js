@@ -55,6 +55,16 @@ const UserSchema = new mongoose_1.Schema({
         enum: ["user", "admin"],
         default: "user",
     },
+    gender: {
+        type: String,
+        trim: true,
+        default: "",
+    },
+    occupation: {
+        type: String,
+        trim: true,
+        default: "",
+    },
     lastLoginDate: {
         type: Date,
         default: null,

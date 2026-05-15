@@ -5,6 +5,8 @@ export interface IUser extends Document {
   email: string;
   password: string;
   role: "user" | "admin";
+  gender: string;
+  occupation: string;
   lastLoginDate?: Date | null;
   loginStreak: number;
   longestLoginStreak: number;
@@ -40,6 +42,18 @@ const UserSchema = new Schema<IUser>(
       type: String,
       enum: ["user", "admin"],
       default: "user",
+    },
+
+    gender: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    occupation: {
+      type: String,
+      trim: true,
+      default: "",
     },
 
     lastLoginDate: {

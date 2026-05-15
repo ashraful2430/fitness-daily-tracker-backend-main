@@ -180,4 +180,59 @@ describe("admin APIs + block login", () => {
     assert.strictEqual(res.body.success, false);
     assert.strictEqual(res.body.message, "Violation of terms");
   });
+
+  it("register saves optional profile fields", async () => {
+    process.env.JWT_SECRET = process.env.JWT_SECRET || "test-secret";
+    patch(User, "findOne", async () => null);
+    patch(User, "create", async (payload) => ({
+      _id: { toString: () => "507f1f77bcf86cd799439011" },
+      name: payload.name,
+      email: payload.email,
+      role: payload.role,
+      gender: payload.gender,
+      occupation: payload.occupation,
+      loginStreak: payload.loginStreak,
+      longestLoginStreak: payload.longestLoginStreak,
+      lastLoginDate: payload.lastLoginDate,
+    }));
+
+    const res = jsonResponse();
+    await authController.register(
+      {
+        body: {
+          name: "Ashik",
+          email: "ashik@example.com",
+          password: "password123",
+          gender: " male ",
+          occupation: " Student ",
+        },
+      },
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 201);
+    assert.strictEqual(res.body.data.gender, "male");
+    assert.strictEqual(res.body.data.occupation, "Student");
+  });
+
+  it("me returns empty profile strings for older users", async () => {
+    patch(User, "findById", () =>
+      chainable({
+        _id: "507f1f77bcf86cd799439011",
+        name: "Legacy",
+        email: "legacy@example.com",
+        role: "user",
+        loginStreak: 1,
+        longestLoginStreak: 1,
+        lastLoginDate: null,
+      }),
+    );
+
+    const res = jsonResponse();
+    await authController.me({ userId: "507f1f77bcf86cd799439011" }, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.data.gender, "");
+    assert.strictEqual(res.body.data.occupation, "");
+  });
 });

@@ -118,6 +118,8 @@ function sanitizeUser(user: IUser) {
     name: user.name,
     email: user.email,
     role: user.role,
+    gender: user.gender || "",
+    occupation: user.occupation || "",
     loginStreak: user.loginStreak || 0,
     longestLoginStreak: user.longestLoginStreak || 0,
     lastLoginDate: user.lastLoginDate || null,
@@ -126,12 +128,22 @@ function sanitizeUser(user: IUser) {
 
 export async function register(req: AuthRequest, res: Response) {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, gender, occupation } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
         message: authMessages.registerMissingFields,
+      });
+    }
+
+    if (
+      (gender !== undefined && typeof gender !== "string") ||
+      (occupation !== undefined && typeof occupation !== "string")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "gender and occupation must be strings when provided",
       });
     }
 
@@ -151,6 +163,8 @@ export async function register(req: AuthRequest, res: Response) {
       email,
       password: hashedPassword,
       role: "user",
+      gender: typeof gender === "string" ? gender.trim() : "",
+      occupation: typeof occupation === "string" ? occupation.trim() : "",
       lastLoginDate: new Date(),
       loginStreak: 1,
       longestLoginStreak: 1,
