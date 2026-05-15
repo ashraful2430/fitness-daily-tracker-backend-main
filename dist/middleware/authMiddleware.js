@@ -7,7 +7,11 @@ exports.authMiddleware = authMiddleware;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const User_1 = __importDefault(require("../models/User"));
 async function authMiddleware(req, res, next) {
-    const token = req.cookies?.token;
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader?.startsWith("Bearer ")
+        ? authHeader.slice("Bearer ".length)
+        : undefined;
+    const token = req.cookies?.token ?? bearerToken;
     if (!token) {
         return res.status(401).json({ success: false, message: "Unauthorized" });
     }

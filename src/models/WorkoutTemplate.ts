@@ -3,6 +3,7 @@ import {
   BODY_PARTS,
   FITNESS_GOAL_TYPES,
   WORKOUT_INTENSITIES,
+  WORKOUT_MOODS,
   WORKOUT_TYPES,
 } from "../constants/fitness";
 
@@ -16,6 +17,12 @@ export interface IWorkoutTemplate extends Document {
   caloriesEstimate: number;
   intensity: string;
   bodyPart: string;
+  sets: number;
+  reps: number;
+  weight: number;
+  distance: number;
+  steps: number;
+  moodAfter?: string | null;
   notesPlaceholder?: string | null;
   isDefault: boolean;
   createdAt?: Date;
@@ -52,6 +59,16 @@ const WorkoutTemplateSchema = new Schema<IWorkoutTemplate>(
       required: true,
       enum: BODY_PARTS,
       default: "full_body",
+    },
+    sets: { type: Number, default: 0, min: 0 },
+    reps: { type: Number, default: 0, min: 0 },
+    weight: { type: Number, default: 0, min: 0 },
+    distance: { type: Number, default: 0, min: 0 },
+    steps: { type: Number, default: 0, min: 0 },
+    moodAfter: {
+      type: String,
+      enum: WORKOUT_MOODS,
+      default: null,
     },
     notesPlaceholder: { type: String, trim: true, default: "" },
     isDefault: { type: Boolean, default: false },

@@ -65,6 +65,16 @@ const WorkoutTemplateSchema = new mongoose_1.Schema({
         enum: fitness_1.BODY_PARTS,
         default: "full_body",
     },
+    sets: { type: Number, default: 0, min: 0 },
+    reps: { type: Number, default: 0, min: 0 },
+    weight: { type: Number, default: 0, min: 0 },
+    distance: { type: Number, default: 0, min: 0 },
+    steps: { type: Number, default: 0, min: 0 },
+    moodAfter: {
+        type: String,
+        enum: fitness_1.WORKOUT_MOODS,
+        default: null,
+    },
     notesPlaceholder: { type: String, trim: true, default: "" },
     isDefault: { type: Boolean, default: false },
 }, { timestamps: true });

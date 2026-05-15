@@ -71,8 +71,13 @@ export async function createFitnessWorkout(req: AuthRequest, res: Response) {
     if (!userId) return;
     const workout = await fitnessService.createWorkout(userId, req.body);
     return ok(res, workout, 201);
-  } catch {
-    return fail(res, 500, "Failed to create workout");
+  } catch (err) {
+    console.error("[fitness.workouts.create]", err);
+    const message =
+      err instanceof Error && process.env.NODE_ENV !== "production"
+        ? err.message
+        : "Failed to create workout";
+    return fail(res, 500, message);
   }
 }
 

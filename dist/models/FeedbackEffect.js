@@ -88,6 +88,5 @@ const FeedbackEffectSchema = new mongoose_1.Schema({
 }, {
     timestamps: true,
 });
-FeedbackEffectSchema.index({ key: 1 }, { unique: true });
 FeedbackEffectSchema.index({ enabled: 1, category: 1, key: 1 });
 exports.default = mongoose_1.default.model("FeedbackEffect", FeedbackEffectSchema);

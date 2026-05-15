@@ -381,7 +381,18 @@ function normalizeTemplatePayload(payload: Record<string, unknown>) {
     caloriesEstimate: Number(payload.caloriesEstimate ?? payload.calories ?? 0),
     intensity: String(payload.intensity ?? "medium"),
     bodyPart: String(payload.bodyPart ?? "full_body"),
-    notesPlaceholder: typeof payload.notesPlaceholder === "string" ? payload.notesPlaceholder.trim() : "",
+    sets: Number(payload.sets ?? 0),
+    reps: Number(payload.reps ?? 0),
+    weight: Number(payload.weight ?? 0),
+    distance: Number(payload.distance ?? 0),
+    steps: Number(payload.steps ?? 0),
+    moodAfter: payload.moodAfter ? String(payload.moodAfter) : null,
+    notesPlaceholder:
+      typeof payload.notesPlaceholder === "string"
+        ? payload.notesPlaceholder.trim()
+        : typeof payload.notes === "string"
+          ? payload.notes.trim()
+          : "",
   };
 }
 
