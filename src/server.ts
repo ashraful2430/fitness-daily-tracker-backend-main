@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
+import path from "path";
 import { connectDB } from "./config/db";
 import authRoutes from "./routes/authRoutes";
 import workoutRoutes from "./routes/workoutRoutes";
@@ -13,6 +14,7 @@ import loanRoutes from "./routes/loanRoutes";
 import lendingRoutes from "./routes/lendingRoutes";
 import financeRoutes from "./routes/financeRoutes";
 import adminRoutes from "./routes/adminRoutes";
+import feedbackEffectRoutes from "./routes/feedbackEffectRoutes";
 
 dotenv.config();
 
@@ -50,6 +52,7 @@ app.use(
 
 app.use(express.json());
 app.use(cookieParser());
+app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/workouts", workoutRoutes);
@@ -61,6 +64,7 @@ app.use("/api/loans", loanRoutes);
 app.use("/api/lending", lendingRoutes);
 app.use("/api/finance", financeRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/feedback-effects", feedbackEffectRoutes);
 
 app.get("/health", (req, res) => {
   res.json({

@@ -7,6 +7,7 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
+const path_1 = __importDefault(require("path"));
 const db_1 = require("./config/db");
 const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
 const workoutRoutes_1 = __importDefault(require("./routes/workoutRoutes"));
@@ -18,6 +19,7 @@ const loanRoutes_1 = __importDefault(require("./routes/loanRoutes"));
 const lendingRoutes_1 = __importDefault(require("./routes/lendingRoutes"));
 const financeRoutes_1 = __importDefault(require("./routes/financeRoutes"));
 const adminRoutes_1 = __importDefault(require("./routes/adminRoutes"));
+const feedbackEffectRoutes_1 = __importDefault(require("./routes/feedbackEffectRoutes"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 // Trust proxy for secure cookies when running behind a reverse proxy / cloud provider
@@ -46,6 +48,7 @@ app.use((0, cors_1.default)({
 }));
 app.use(express_1.default.json());
 app.use((0, cookie_parser_1.default)());
+app.use("/uploads", express_1.default.static(path_1.default.join(process.cwd(), "public", "uploads")));
 app.use("/api/auth", authRoutes_1.default);
 app.use("/api/workouts", workoutRoutes_1.default);
 app.use("/api/dashboard", dashboardRoutes_1.default);
@@ -56,6 +59,7 @@ app.use("/api/loans", loanRoutes_1.default);
 app.use("/api/lending", lendingRoutes_1.default);
 app.use("/api/finance", financeRoutes_1.default);
 app.use("/api/admin", adminRoutes_1.default);
+app.use("/api/feedback-effects", feedbackEffectRoutes_1.default);
 app.get("/health", (req, res) => {
     res.json({
         status: "ok",

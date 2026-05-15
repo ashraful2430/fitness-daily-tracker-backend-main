@@ -5,10 +5,17 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const adminController_1 = require("../controllers/adminController");
+const feedbackEffectController_1 = require("../controllers/feedbackEffectController");
 const authMiddleware_1 = require("../middleware/authMiddleware");
 const adminMiddleware_1 = require("../middleware/adminMiddleware");
+const feedbackUploadMiddleware_1 = require("../middleware/feedbackUploadMiddleware");
 const router = express_1.default.Router();
 router.use(authMiddleware_1.authMiddleware, adminMiddleware_1.adminMiddleware);
+router.get("/feedback-effects", feedbackEffectController_1.getAdminFeedbackEffects);
+router.post("/feedback-effects", feedbackEffectController_1.upsertAdminFeedbackEffect);
+router.post("/feedback-effects/upload", feedbackUploadMiddleware_1.feedbackUploadMiddleware, feedbackEffectController_1.uploadAdminFeedbackAsset);
+router.patch("/feedback-effects/:id", feedbackEffectController_1.patchAdminFeedbackEffect);
+router.delete("/feedback-effects/:id", feedbackEffectController_1.deleteAdminFeedbackEffect);
 router.get("/users", adminController_1.getAdminUsers);
 router.get("/users/:userId/summary", adminController_1.getUserAdminSummary);
 router.patch("/users/:userId/role", adminController_1.updateUserRole);
