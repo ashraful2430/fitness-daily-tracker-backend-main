@@ -35,99 +35,39 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
 const fitness_1 = require("../constants/fitness");
-const WorkoutSchema = new mongoose_1.Schema({
-    userId: {
-        type: mongoose_1.Schema.Types.ObjectId,
-        ref: "User",
-        required: true,
-    },
-    title: {
-        type: String,
-        required: true,
-        trim: true,
-    },
-    workoutDate: {
-        type: Date,
-        required: true,
-        default: Date.now,
-    },
-    workoutType: {
-        type: String,
-        enum: fitness_1.WORKOUT_TYPES,
-        default: "general",
-    },
+const WorkoutTemplateSchema = new mongoose_1.Schema({
+    userId: { type: mongoose_1.Schema.Types.ObjectId, ref: "User", default: null },
+    name: { type: String, required: true, trim: true },
     goalType: {
         type: String,
+        required: true,
         enum: fitness_1.FITNESS_GOAL_TYPES,
         default: "general_fitness",
     },
-    durationMinutes: {
-        type: Number,
+    title: { type: String, required: true, trim: true },
+    workoutType: {
+        type: String,
         required: true,
-        min: 1,
-        max: 600,
+        enum: fitness_1.WORKOUT_TYPES,
+        default: "general",
     },
-    calories: {
-        type: Number,
-        default: 0,
-        min: 0,
-    },
+    durationMinutes: { type: Number, required: true, min: 1, max: 600 },
+    caloriesEstimate: { type: Number, default: 0, min: 0 },
     intensity: {
         type: String,
+        required: true,
         enum: fitness_1.WORKOUT_INTENSITIES,
         default: "medium",
     },
     bodyPart: {
         type: String,
+        required: true,
         enum: fitness_1.BODY_PARTS,
         default: "full_body",
     },
-    sets: { type: Number, default: 0, min: 0 },
-    reps: { type: Number, default: 0, min: 0 },
-    weight: { type: Number, default: 0, min: 0 },
-    distance: { type: Number, default: 0, min: 0 },
-    steps: { type: Number, default: 0, min: 0 },
-    moodAfter: {
-        type: String,
-        enum: fitness_1.WORKOUT_MOODS,
-        default: null,
-    },
-    notes: {
-        type: String,
-        default: "",
-        trim: true,
-    },
-    status: {
-        type: String,
-        enum: fitness_1.WORKOUT_STATUSES,
-        default: "planned",
-    },
-    startedAt: {
-        type: Date,
-        default: null,
-    },
-    completedAt: {
-        type: Date,
-        default: null,
-    },
-    duration: {
-        type: Number,
-        min: 1,
-        max: 600,
-    },
-    type: {
-        type: String,
-    },
+    notesPlaceholder: { type: String, trim: true, default: "" },
+    isDefault: { type: Boolean, default: false },
 }, { timestamps: true });
-WorkoutSchema.index({ userId: 1, createdAt: -1 });
-WorkoutSchema.index({ userId: 1, status: 1, workoutDate: -1 });
-WorkoutSchema.index({ userId: 1, workoutDate: -1 });
-WorkoutSchema.index({ userId: 1, workoutType: 1 });
-WorkoutSchema.index({ userId: 1, goalType: 1 });
-WorkoutSchema.index({ userId: 1, bodyPart: 1 });
-WorkoutSchema.pre("validate", function syncLegacyWorkoutFields(next) {
-    this.duration = this.durationMinutes;
-    this.type = this.workoutType;
-    next();
-});
-exports.default = mongoose_1.default.model("Workout", WorkoutSchema);
+WorkoutTemplateSchema.index({ name: 1, isDefault: 1 }, { unique: true, partialFilterExpression: { isDefault: true } });
+WorkoutTemplateSchema.index({ userId: 1, createdAt: -1 });
+exports.default = mongoose_1.default.model("WorkoutTemplate", WorkoutTemplateSchema);

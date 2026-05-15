@@ -6,6 +6,7 @@ import path from "path";
 import { connectDB } from "./config/db";
 import authRoutes from "./routes/authRoutes";
 import workoutRoutes from "./routes/workoutRoutes";
+import fitnessRoutes from "./routes/fitnessRoutes";
 import dashboardRoutes from "./routes/dashboardRoutes";
 import scoreSectionRoutes from "./routes/scoreSectionRoutes";
 import moneyRoutes from "./routes/moneyRoutes";
@@ -56,6 +57,7 @@ app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")
 
 app.use("/api/auth", authRoutes);
 app.use("/api/workouts", workoutRoutes);
+app.use("/api/fitness", fitnessRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/score-sections", scoreSectionRoutes);
 app.use("/api/money", moneyRoutes);

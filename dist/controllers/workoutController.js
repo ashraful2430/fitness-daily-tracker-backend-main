@@ -21,8 +21,10 @@ async function getWorkouts(req, res) {
 }
 async function createWorkout(req, res) {
     try {
-        const { title, duration, type, calories } = req.body;
-        if (!title || !duration) {
+        const { title, duration, durationMinutes, type, workoutType, calories } = req.body;
+        const normalizedDuration = durationMinutes ?? duration;
+        const normalizedType = workoutType ?? type ?? "general";
+        if (!title || !normalizedDuration) {
             return res.status(400).json({
                 message: "Title and duration are required",
             });
@@ -30,8 +32,12 @@ async function createWorkout(req, res) {
         const workout = await Workout_1.default.create({
             userId: req.userId,
             title,
-            duration,
-            type,
+            workoutDate: new Date(),
+            durationMinutes: normalizedDuration,
+            workoutType: String(normalizedType).toLowerCase(),
+            goalType: "general_fitness",
+            intensity: "medium",
+            bodyPart: "full_body",
             calories,
         });
         return res.status(201).json({
