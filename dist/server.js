@@ -67,6 +67,15 @@ app.use("/api/lending", lendingRoutes_1.default);
 app.use("/api/finance", financeRoutes_1.default);
 app.use("/api/admin", adminRoutes_1.default);
 app.use("/api/feedback-effects", feedbackEffectRoutes_1.default);
+app.get("/", (_req, res) => {
+    res.json({
+        success: true,
+        status: "active",
+        message: "Planify Life Backend is active and running.",
+        health: "/health",
+        database: "/api/test-db",
+    });
+});
 app.get("/health", (req, res) => {
     res.json({
         status: "ok",
