@@ -111,14 +111,25 @@ npm install
 
 ### Environment Setup
 
-Create a `.env` file in the project root:
+Copy the example file and create a real `.env` file in the project root:
+
+```bash
+cp .env.example .env
+```
+
+Use this for local development:
 
 ```env
 PORT=5000
+NODE_ENV=development
 MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>/<database>
 JWT_SECRET=replace-with-a-long-random-secret
-NODE_ENV=development
+FRONTEND_URL=http://localhost:3000
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+COOKIE_SECURE=false
 ```
+
+`.env.example` is safe to commit as documentation. `.env` contains real secrets and must stay ignored by Git.
 
 ### Run Locally
 
@@ -154,7 +165,10 @@ Expected response:
 | `PORT` | No | `5000` | Port used by the Express server. |
 | `MONGODB_URI` | Yes | none | MongoDB connection string used by Mongoose. |
 | `JWT_SECRET` | Yes | none | Secret used to sign and verify JWT session tokens. |
-| `NODE_ENV` | No | `development` | Controls production cookie behavior. Use `production` in deployed environments. |
+| `NODE_ENV` | No | `development` | Runtime environment. Use `production` on cloud servers. |
+| `FRONTEND_URL` | Yes | none | Main frontend origin, for example `http://localhost:3000` or `http://54.226.53.255:3000`. |
+| `CORS_ALLOWED_ORIGINS` | No | local frontend origins | Comma-separated extra origins allowed by CORS. Useful for EC2 IPs, domains, and direct API testing. |
+| `COOKIE_SECURE` | No | inferred from `FRONTEND_URL` | Use `false` for HTTP testing and `true` for real HTTPS production. |
 
 ## Available Scripts
 
@@ -164,8 +178,6 @@ Expected response:
 | `npm run build` | Compile TypeScript from `src/` into `dist/`. |
 | `npm start` | Run the compiled app from `dist/server.js`. |
 | `npm test` | Build the project and run the test suite. |
-| `npm run vercel-build` | Build command used for Vercel deployment. |
-| `npm run postinstall` | Compile TypeScript after dependency installation. |
 
 ## Authentication
 
@@ -173,9 +185,12 @@ Authentication is cookie-based.
 
 - The server signs a JWT containing `userId`.
 - The token is stored in an HTTP-only cookie named `token`.
-- Protected routes read the cookie through `authMiddleware`.
+- Protected routes read either the `token` cookie or an `Authorization: Bearer <token>` header.
 - Invalid or expired tokens are cleared automatically.
-- In production, cookies use `secure: true` and `sameSite: "none"` for cross-site frontend/backend deployment.
+- Cookies do not set a `Domain` attribute.
+- For HTTP testing on localhost or an EC2 IP, use `COOKIE_SECURE=false`.
+- For real HTTPS production, use `COOKIE_SECURE=true`.
+- Cookies use `sameSite: "lax"` so frontend proxy routes can work cleanly with HTTP-only auth.
 
 Auth endpoints:
 
@@ -467,21 +482,98 @@ npm.cmd test
 
 ## Deployment
 
-The backend is ready for deployment to Node-compatible platforms such as Vercel or a traditional Node server.
+The backend can run on any Node-compatible cloud server: AWS EC2, DigitalOcean, Render, Railway, a VPS, or a container platform. The app listens on `0.0.0.0`, so it can receive traffic from outside the machine when the cloud firewall/security group allows the port.
 
-Production checklist:
+### Local Development
 
-- Set `MONGODB_URI`.
-- Set a strong `JWT_SECRET`.
-- Set `NODE_ENV=production`.
-- Configure the frontend origin in `src/server.ts` CORS settings.
-- Run `npm run build`.
-- Start with `npm start` or the platform's Node start command.
+Backend `.env`:
 
-The included Vercel build command is:
+```env
+PORT=5000
+NODE_ENV=development
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>/<database>
+JWT_SECRET=replace-with-a-long-random-secret
+FRONTEND_URL=http://localhost:3000
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+COOKIE_SECURE=false
+```
+
+Run:
 
 ```bash
-npm run vercel-build
+npm install
+npm run dev
+```
+
+Local frontend should call this backend through its own proxy/API routes. If the frontend and backend are both local, the frontend server-side API proxy can use:
+
+```env
+EXTERNAL_API_URL=http://127.0.0.1:5000
+```
+
+### Cloud / EC2 HTTP Testing
+
+Use this when the frontend is reachable at an IP address such as `http://54.226.53.255:3000` and the backend runs on port `5000`.
+
+Backend `.env`:
+
+```env
+PORT=5000
+NODE_ENV=production
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>/<database>
+JWT_SECRET=replace-with-a-long-random-secret
+FRONTEND_URL=http://54.226.53.255:3000
+CORS_ALLOWED_ORIGINS=http://54.226.53.255:3000,http://127.0.0.1:3000
+COOKIE_SECURE=false
+```
+
+Install, build, and start:
+
+```bash
+git pull origin master
+npm ci
+npm run build
+npm start
+```
+
+`npm ci` installs exactly from `package-lock.json`; use `npm install` instead only when you are changing dependencies.
+
+Cloud checklist:
+
+- Allow inbound traffic to the frontend port, usually `3000`.
+- Allow inbound traffic to backend port `5000` only if you need direct API testing from outside the server.
+- If using MongoDB Atlas, allow the cloud server public IP in Atlas Network Access.
+- Keep `.env` on the server and never commit it.
+- Use a process manager such as `pm2`, `systemd`, Docker, or your platform's native process runner for long-running production use.
+
+### HTTPS Production
+
+When you move to a real domain with HTTPS, change the cookie setting:
+
+```env
+FRONTEND_URL=https://your-domain.com
+CORS_ALLOWED_ORIGINS=https://your-domain.com
+COOKIE_SECURE=true
+```
+
+Rebuild and restart after changing deployed code:
+
+```bash
+npm run build
+npm start
+```
+
+### Frontend Proxy Contract
+
+The frontend should not use `MONGODB_URI`, `JWT_SECRET`, or any backend secret. It should keep only a server-side backend URL such as:
+
+```env
+EXTERNAL_API_URL=http://127.0.0.1:5000
+```
+
+Browser code should call relative frontend routes like `/api/auth/login`, `/api/auth/me`, `/api/workouts`, and `/api/learning/alarm-sounds`. The frontend API routes then proxy those requests to `EXTERNAL_API_URL`, forwarding `Cookie`, `Set-Cookie`, and `Authorization` headers.
+
+With this shape, CORS usually does not affect browser requests because the browser talks to the frontend origin, not directly to the backend origin.
 ```
 
 ## Development Workflow
@@ -510,13 +602,47 @@ Code style guidance:
 
 Check that `MONGODB_URI` exists in `.env`, points to the correct database, and that your IP/network is allowed by the MongoDB provider.
 
+You can also test the live database connection:
+
+```http
+GET /api/test-db
+```
+
 ### Unauthorized responses
 
-Protected routes require a valid `token` cookie. Log in again if the token is missing, invalid, or expired.
+Protected routes require a valid `token` cookie or `Authorization: Bearer <token>` header. Log in again if the token is missing, invalid, or expired.
 
-### Cookies work locally but not in production
+### Cookies do not work on EC2 HTTP
 
-Set `NODE_ENV=production`, use HTTPS, and make sure the frontend sends requests with credentials enabled. Also confirm the frontend origin is allowed in CORS.
+For plain HTTP testing on an EC2 IP, use:
+
+```env
+COOKIE_SECURE=false
+FRONTEND_URL=http://your-ec2-public-ip:3000
+```
+
+If frontend browser code calls `fetch`, use `credentials: "include"` for auth requests.
+
+### Cookies do not work on HTTPS production
+
+For a real HTTPS domain, use:
+
+```env
+COOKIE_SECURE=true
+FRONTEND_URL=https://your-domain.com
+```
+
+Make sure the frontend proxy forwards `Set-Cookie` from the backend response back to the browser.
+
+### CORS blocked for origin
+
+First check whether the frontend is directly calling the backend from browser code. The preferred setup is browser -> frontend `/api/*` route -> backend, using `EXTERNAL_API_URL` on the frontend server.
+
+If you intentionally call the backend directly, add the exact browser origin to backend `.env`:
+
+```env
+CORS_ALLOWED_ORIGINS=http://your-frontend-host:3000
+```
 
 ### PowerShell blocks npm scripts
 
@@ -524,6 +650,13 @@ Use the Windows command shim:
 
 ```bash
 npm.cmd test
+```
+
+The same applies to build and dev commands:
+
+```bash
+npm.cmd run build
+npm.cmd run dev
 ```
 
 ## License

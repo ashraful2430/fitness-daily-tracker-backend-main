@@ -5,9 +5,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const authMiddleware_1 = require("../middleware/authMiddleware");
+const learningAlarmSoundController_1 = require("../controllers/learningAlarmSoundController");
 const learningController_1 = require("../controllers/learningController");
 const router = express_1.default.Router();
 router.use(authMiddleware_1.authMiddleware);
+router.get("/alarm-sounds", learningAlarmSoundController_1.getLearningAlarmSounds);
+router.post("/alarm-sounds", learningAlarmSoundController_1.postLearningAlarmSound);
+router.delete("/alarm-sounds", learningAlarmSoundController_1.deleteLearningAlarmSound);
 router.get("/sessions", learningController_1.getLearningSessions);
 router.post("/sessions", learningController_1.createLearningSession);
 router.get("/sessions/:id", learningController_1.getLearningSession);

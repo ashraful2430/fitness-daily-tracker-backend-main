@@ -3,8 +3,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User, { IUser } from "../models/User";
 import { AuthRequest } from "../middleware/authMiddleware";
-
-const COOKIE_NAME = "token";
+import { clearAuthCookie, setAuthCookie } from "../utils/authCookie";
 
 const authMessages = {
   registerMissingFields:
@@ -35,27 +34,6 @@ function createToken(userId: string) {
   return jwt.sign({ userId }, process.env.JWT_SECRET as string, {
     expiresIn: "7d",
   });
-}
-
-function getAuthCookieOptions() {
-  const isProduction = process.env.NODE_ENV === "production";
-  const sameSite: "none" | "lax" = isProduction ? "none" : "lax";
-
-  return {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite,
-    path: "/",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  };
-}
-
-function setAuthCookie(res: Response, token: string) {
-  res.cookie(COOKIE_NAME, token, getAuthCookieOptions());
-}
-
-function clearAuthCookie(res: Response) {
-  res.clearCookie(COOKIE_NAME, getAuthCookieOptions());
 }
 
 function startOfDay(date: Date) {

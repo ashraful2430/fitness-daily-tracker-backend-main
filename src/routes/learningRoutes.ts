@@ -1,6 +1,11 @@
 import express from "express";
 import { authMiddleware } from "../middleware/authMiddleware";
 import {
+  deleteLearningAlarmSound,
+  getLearningAlarmSounds,
+  postLearningAlarmSound,
+} from "../controllers/learningAlarmSoundController";
+import {
   cancelLearningSession,
   completeLearningSession,
   createLearningSession,
@@ -32,6 +37,10 @@ import {
 const router = express.Router();
 
 router.use(authMiddleware);
+
+router.get("/alarm-sounds", getLearningAlarmSounds);
+router.post("/alarm-sounds", postLearningAlarmSound);
+router.delete("/alarm-sounds", deleteLearningAlarmSound);
 
 router.get("/sessions", getLearningSessions);
 router.post("/sessions", createLearningSession);

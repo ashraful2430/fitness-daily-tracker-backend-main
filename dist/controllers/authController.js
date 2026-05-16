@@ -10,7 +10,7 @@ exports.logout = logout;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const User_1 = __importDefault(require("../models/User"));
-const COOKIE_NAME = "token";
+const authCookie_1 = require("../utils/authCookie");
 const authMessages = {
     registerMissingFields: "Name, email, and password are required. The signup form is not a guessing game.",
     registerEmailTaken: "That email is already taken. Someone got here first, dramatically.",
@@ -28,23 +28,6 @@ function createToken(userId) {
     return jsonwebtoken_1.default.sign({ userId }, process.env.JWT_SECRET, {
         expiresIn: "7d",
     });
-}
-function getAuthCookieOptions() {
-    const isProduction = process.env.NODE_ENV === "production";
-    const sameSite = isProduction ? "none" : "lax";
-    return {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite,
-        path: "/",
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-    };
-}
-function setAuthCookie(res, token) {
-    res.cookie(COOKIE_NAME, token, getAuthCookieOptions());
-}
-function clearAuthCookie(res) {
-    res.clearCookie(COOKIE_NAME, getAuthCookieOptions());
 }
 function startOfDay(date) {
     const value = new Date(date);
@@ -135,7 +118,7 @@ async function register(req, res) {
             longestLoginStreak: 1,
         });
         const token = createToken(user._id.toString());
-        setAuthCookie(res, token);
+        (0, authCookie_1.setAuthCookie)(res, token);
         return res.status(201).json({
             success: true,
             message: authMessages.registerSuccess,
@@ -181,7 +164,7 @@ async function login(req, res) {
         }
         const updatedUser = await updateLoginStreak(user);
         const token = createToken(updatedUser._id.toString());
-        setAuthCookie(res, token);
+        (0, authCookie_1.setAuthCookie)(res, token);
         return res.json({
             success: true,
             message: authMessages.loginSuccess,
@@ -217,7 +200,7 @@ async function me(req, res) {
     }
 }
 async function logout(req, res) {
-    clearAuthCookie(res);
+    (0, authCookie_1.clearAuthCookie)(res);
     return res.json({
         success: true,
         message: authMessages.logoutSuccess,

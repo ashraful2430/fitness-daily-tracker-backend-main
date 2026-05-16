@@ -8,6 +8,7 @@ const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const path_1 = __importDefault(require("path"));
+const mongoose_1 = __importDefault(require("mongoose"));
 const db_1 = require("./config/db");
 const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
 const workoutRoutes_1 = __importDefault(require("./routes/workoutRoutes"));
@@ -25,21 +26,23 @@ dotenv_1.default.config();
 const app = (0, express_1.default)();
 // Trust proxy for secure cookies when running behind a reverse proxy / cloud provider
 app.set("trust proxy", 1);
-const allowedOrigins = [
+function getEnvOrigins(value) {
+    return (value || "")
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+}
+const allowedOrigins = new Set([
     "http://localhost:3000",
     "http://localhost:3001",
-    "http://localhost:3002",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
-    "http://127.0.0.1:3002",
-    "http://54.226.53.255",
-    "https://54.226.53.255",
-    "https://fitness-daily-tracker.vercel.app",
-    process.env.FRONTEND_URL,
-].filter(Boolean);
+    ...getEnvOrigins(process.env.FRONTEND_URL),
+    ...getEnvOrigins(process.env.CORS_ALLOWED_ORIGINS),
+]);
 app.use((0, cors_1.default)({
     origin(origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
+        if (!origin || allowedOrigins.has(origin)) {
             callback(null, true);
             return;
         }
@@ -70,9 +73,33 @@ app.get("/health", (req, res) => {
         app: "Planify Life Backend",
     });
 });
+app.get("/api/test-db", async (_req, res) => {
+    try {
+        if (mongoose_1.default.connection.readyState !== 1 || !mongoose_1.default.connection.db) {
+            return res.status(503).json({
+                success: false,
+                status: "disconnected",
+                readyState: mongoose_1.default.connection.readyState,
+            });
+        }
+        await mongoose_1.default.connection.db.admin().ping();
+        return res.json({
+            success: true,
+            status: "connected",
+            database: mongoose_1.default.connection.name,
+        });
+    }
+    catch {
+        return res.status(500).json({
+            success: false,
+            status: "error",
+            message: "Database ping failed",
+        });
+    }
+});
 const PORT = process.env.PORT || 5000;
 (0, db_1.connectDB)().then(() => {
-    app.listen(PORT, () => {
+    app.listen(Number(PORT), "0.0.0.0", () => {
         console.log(`Backend running on port ${PORT}`);
     });
 });
