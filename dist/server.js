@@ -32,6 +32,8 @@ const allowedOrigins = [
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
     "http://127.0.0.1:3002",
+    "http://54.226.53.255",
+    "https://54.226.53.255",
     "https://fitness-daily-tracker.vercel.app",
     process.env.FRONTEND_URL,
 ].filter(Boolean);
